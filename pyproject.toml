@@ -1,0 +1,11 @@
+[project]
+name = "ugr-rig"
+version = "0.1.0"
+description = "Raspberry Pi rig that measures discomfort glare (CIE 117 UGR) in truck cabins"
+readme = "README.md"
+requires-python = ">=3.11"
+# Runtime dependencies are pinned in requirements.txt (installed from wheels on the Pi).
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

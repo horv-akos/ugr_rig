@@ -1,0 +1,57 @@
+# Photometry and glare analysis configuration.
+#
+# Everything here is stored with every result (params snapshot), so a number can
+# be recomputed later. Values marked MEASURE are placeholders.
+
+[sensor]                        # Canon EOS 2000D, APS-C 22.3 x 14.9 mm, 6000 x 4000
+pixel_pitch_um = 3.72           # raw pixel pitch. Geometry uses pitch x image size, so a few
+                                # pixels of border crop do not move the optical axis maths
+saturation_fraction = 0.92      # MEASURE: fraction of (white - black) treated as clipped.
+                                # Canon clips below the white level LibRaw reports
+noise_floor_fraction = 0.002    # below this (of the clip level) a pixel gets zero merge weight
+
+[lens]
+name = "EF-S 18-55 mm at 18 mm (taped)"
+focal_mm = 18.0                 # MEASURE: effective focal length at the taped wide end, from a
+                                # chart. 1 % off in f is ~2 % off in every solid angle
+distortion_k1 = 0.0             # MEASURE: radial, r_true = r_image * (1 + k1 * r_image^2) in units
+                                # of f. Barrel (the kit lens at 18 mm) is positive. 0 = ideal
+vignetting_map = ""             # .npy at working resolution, 1.0 on axis. "" = no correction
+                                # (flagged in every result). Measure at the working aperture
+
+[calibration]
+k = 0.0                         # cd/m2 per (DN * N^2 / (t * ISO)). 0 = uncalibrated: results are
+                                # still produced, in relative units, and flagged
+k_drift_warn = 0.10             # session k differing from the stored one by more = warning
+spectral_factor = 1.0           # global factor until the per-source-type table is measured
+
+[calibration.spectral_factors]  # per source type, selected by inclusion ROI. MEASURE
+# white_led = 1.00
+# amber = 1.00
+# red = 1.00
+# display = 1.00
+
+[processing]
+binning = 2                     # 2x2 Bayer superpixel -> 3000 x 2000. No demosaic needed
+luminance_weights = "matrix"    # "matrix": Y row of the camera's colour matrix (from the CR2),
+                                # i.e. the channel mix closest to V(lambda). Or [r, g, b]
+
+[detection]
+threshold_cd_m2 = 500.0         # absolute, recorded with every result
+min_pixels = 4                  # smaller blobs are hot pixels or noise
+merge_radius_px = 3             # blobs closer than this are one luminaire (LED arrays)
+
+[background]
+method = "frame"                # "frame": solid-angle-weighted mean of the non-source pixels of
+                                # the frame itself - provisional, flagged. "sweep": session value
+                                # from the hemisphere sweep (analysis/background.py), passed in
+windows_in_background = true    # window pixels are not glare sources, but they do light the eye
+sweep_bin_deg = 2.0
+
+[ugr]
+line_of_sight = "camera"        # "camera": each region is rated as if the observer looks along
+                                # the camera axis. Or [pan_deg, tilt_deg]: fixed gaze in mount
+                                # coordinates, sources positioned relative to it
+omega_min_sr = 0.0003           # CIE 117 validity range; outside it a source is flagged, not
+omega_max_sr = 0.1              # dropped
+position_index_cap = 16.0

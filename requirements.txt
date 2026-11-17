@@ -1,0 +1,16 @@
+# Processing (Pi and desk)
+numpy>=1.24
+scipy>=1.10
+rawpy>=0.19          # LibRaw; reads Canon CR2
+exifread>=3.0
+matplotlib>=3.6
+pillow>=9.0
+
+# Camera control (Pi). Wheels bundle libgphoto2; LGPL-3.0-or-later
+gphoto2>=2.5
+
+# Mount (Pi only; pigpiod must be running)
+pigpio; platform_machine == "aarch64" or platform_machine == "armv7l"
+
+# Tests
+pytest

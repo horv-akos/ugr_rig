@@ -1,0 +1,169 @@
+"""Desk simulator for the camera: renders a known luminance scene into Bayer
+frames the way the 2000D would, and writes a bracket directory in the same
+layout as the real camera (manifest.json + one file per frame).
+
+Frames are .npz rather than CR2 - LibRaw cannot be fed a synthetic CR2 - but
+they carry the same fields `photometry.linearise` takes from a CR2: mosaic,
+CFA layout, per-channel black level, white level.
+
+The scene is grey (all four Bayer channels equal), so any luminance weights
+that sum to 1 recover it exactly. The shutter is timed in true APEX steps, so
+running the merge with `shutter_model = "nominal"` shows the seams that the
+apex model removes.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+
+from .camera import BracketManifest, FrameRecord, now_iso, sha256_file
+from .camera_config import CameraConfig, apex_time, effective_time, parse_shutter
+
+# Normalised polygons matching demo_scene, in the format analysis.detection reads.
+DEMO_MASKS = {
+    "version": "demo-1",
+    "exclude": [[[0.0, 0.0], [0.45, 0.0], [0.45, 0.30], [0.0, 0.30]]],
+    "include": [{"name": "dome", "type": "white_led",
+                 "polygon": [[0.62, 0.10], [0.74, 0.10], [0.74, 0.26], [0.62, 0.26]]}],
+}
+
+# 2000D-like sensor model at ISO 100
+BLACK = 2048
+WHITE = 15000
+GAIN_E_PER_DN = 2.0
+READ_NOISE_DN = 6.0
+K_TRUE = 0.0064        # cd/m2 per (DN * N^2 / (t * ISO)); ~200 000 cd/m2 clips at 1/4096, f/8
+CFA = np.array([[0, 1], [3, 2]], dtype=np.uint8)   # R G / G2 B, LibRaw channel indices
+COLOR_DESC = "RGBG"
+# Canon-like XYZ -> camera matrix, illustrative only (the real one comes from the CR2).
+# Present so the simulator exercises the same weighting path as a real frame.
+CAM_XYZ = np.array([[0.6939, -0.1016, -0.0866],
+                    [-0.4428, 1.2473, 0.2177],
+                    [-0.1175, 0.2178, 0.6162]])
+
+
+@dataclass
+class SyntheticScene:
+    """Luminance in cd/m2 at superpixel resolution, plus ground truth."""
+
+    L: np.ndarray                                   # (h, w) float64
+    sources: dict[str, np.ndarray] = field(default_factory=dict)   # name -> bool mask
+    exclude: np.ndarray | None = None               # window mask
+    notes: dict[str, Any] = field(default_factory=dict)
+
+
+def _disk(h: int, w: int, cx: float, cy: float, r: float) -> np.ndarray:
+    yy, xx = np.mgrid[0:h, 0:w]
+    return (xx - cx) ** 2 + (yy - cy) ** 2 <= r ** 2
+
+
+def _rect(h: int, w: int, x0: float, y0: float, x1: float, y1: float) -> np.ndarray:
+    m = np.zeros((h, w), bool)
+    m[int(y0 * h):int(y1 * h), int(x0 * w):int(x1 * w)] = True
+    return m
+
+
+def demo_scene(h: int = 1000, w: int = 1500, seed: int = 1,
+               bare_led_cd_m2: float = 1.5e6) -> SyntheticScene:
+    """A dim cab at dusk: graded interior, a bright window (to be masked out),
+    a dome light, a reading LED, a display, an instrument cluster below the
+    threshold, and one bare LED far too bright for the darkest frame."""
+    rng = np.random.default_rng(seed)
+    yy, xx = np.mgrid[0:h, 0:w] / np.array([h, w])[:, None, None]
+    L = 3.0 + 12.0 * (1 - yy) * (0.6 + 0.4 * xx)                 # 3..15 cd/m2
+    L *= 1 + 0.02 * rng.standard_normal((h, w)).clip(-3, 3)      # surface texture
+
+    window = np.zeros((h, w), bool)
+    window[: int(0.30 * h), : int(0.45 * w)] = True
+    L[window] = 3000.0 + 1500.0 * xx[window]
+
+    s = min(h, w)
+    sources = {
+        "dome": _disk(h, w, 0.68 * w, 0.18 * h, 0.035 * s),
+        "reading_led": _disk(h, w, 0.86 * w, 0.32 * h, 0.006 * s + 1.5),
+        "display": _rect(h, w, 0.36, 0.58, 0.56, 0.74),
+        "bare_led": _disk(h, w, 0.92 * w, 0.86 * h, 2.5),
+    }
+    levels = {"dome": 8000.0, "reading_led": 60000.0, "display": 900.0, "bare_led": bare_led_cd_m2}
+    for name, m in sources.items():
+        L[m] = levels[name]
+    cluster = _rect(h, w, 0.08, 0.72, 0.30, 0.82)
+    L[cluster] = 250.0                                           # below 500: not a source
+
+    return SyntheticScene(
+        L=L, sources=sources, exclude=window,
+        notes={"levels": levels, "cluster_cd_m2": 250.0, "k_true": K_TRUE,
+               "expect_clipped": ["bare_led"]},
+    )
+
+
+class FakeCamera:
+    """Implements hal.camera.Camera against a SyntheticScene."""
+
+    def __init__(self, config: CameraConfig, scene: SyntheticScene | None = None,
+                 seed: int = 0, k_true: float = K_TRUE, vignette: np.ndarray | None = None) -> None:
+        self.config = config
+        self.scene = scene if scene is not None else demo_scene()
+        self.k_true = k_true
+        self.vignette = vignette
+        self._rng = np.random.default_rng(seed)
+        self._connected = False
+
+    def connect(self) -> None:
+        self._connected = True
+
+    def close(self) -> None:
+        self._connected = False
+
+    def __enter__(self) -> "FakeCamera":
+        self.connect()
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.close()
+
+    def info(self) -> dict[str, Any]:
+        h, w = self.scene.L.shape
+        return {"model": "FakeCamera (2000D model)", "serial": "SIM", "lens": "ideal 18 mm",
+                "sensor_px": f"{2 * w}x{2 * h}", "connected": self._connected}
+
+    def render(self, t_true: float, aperture: float, iso: int) -> np.ndarray:
+        L = self.scene.L if self.vignette is None else self.scene.L * self.vignette
+        dn = L * t_true * iso / (self.k_true * aperture ** 2)
+        dn = dn + np.sqrt(np.maximum(dn, 0) / GAIN_E_PER_DN) * self._rng.standard_normal(dn.shape)
+        mosaic = np.repeat(np.repeat(dn, 2, axis=0), 2, axis=1)
+        mosaic += READ_NOISE_DN * self._rng.standard_normal(mosaic.shape)
+        return np.clip(np.rint(mosaic + BLACK), 0, WHITE).astype(np.uint16)
+
+    def capture_bracket(self, out_dir: str | Path,
+                        meta: dict[str, Any] | None = None) -> BracketManifest:
+        if not self._connected:
+            raise RuntimeError("not connected")
+        cfg = self.config
+        out = Path(out_dir)
+        out.mkdir(parents=True, exist_ok=True)
+        manifest = BracketManifest(format="npz", camera=self.info(), settings=cfg.snapshot(),
+                                   started_at=now_iso(), meta=dict(meta or {}))
+        for i, label in enumerate(sorted(cfg.exposure.shutter, key=parse_shutter)):
+            t_true = apex_time(parse_shutter(label))
+            mosaic = self.render(t_true, cfg.exposure.aperture, cfg.exposure.iso)
+            name = f"frame_{i:02d}.npz"
+            np.savez(out / name, mosaic=mosaic, cfa=CFA, color_desc=COLOR_DESC,
+                     black=np.full(4, BLACK, np.float64), white=float(WHITE), cam_xyz=CAM_XYZ)
+            manifest.frames.append(FrameRecord(
+                file=name, shutter_label=label, t_marked_s=parse_shutter(label),
+                t_effective_s=effective_time(label, cfg.exposure.shutter_model,
+                                             cfg.exposure.shutter_correction),
+                aperture=cfg.exposure.aperture, iso=cfg.exposure.iso,
+                bytes=(out / name).stat().st_size, sha256=sha256_file(out / name),
+                captured_at=now_iso(),
+                exif={"exposure_time_s": parse_shutter(label), "f_number": cfg.exposure.aperture,
+                      "iso": cfg.exposure.iso, "model": "FakeCamera"},
+            ))
+        manifest.finished_at = now_iso()
+        manifest.save(out)
+        return manifest

@@ -1,0 +1,39 @@
+# Camera and capture configuration - Canon EOS 2000D over USB (gphoto2/PTP).
+#
+# Values marked MEASURE are placeholders until characterised on the real body.
+# The photometric side (lens geometry, calibration, detection) is in analysis.toml.
+
+[camera]
+model = "Canon EOS 2000D"       # checked against what gphoto2 reports; mismatch = warning
+capture_target = "card"         # "card": the CR2 is kept on the SD card until the Pi has a
+                                # verified copy. "ram": nothing touches the card, but a failed
+                                # download means re-shooting the frame
+delete_after_verify = true      # card target only: delete the card copy once verified
+image_format = "RAW"            # CR2 only, no JPEG
+white_balance = "Daylight"      # does not touch the raw data; fixed so the metadata is stable
+download_timeout_s = 30
+min_file_bytes = 5_000_000      # a 2000D CR2 is ~25 MB; anything tiny is a truncated transfer
+exif_check = true               # re-read shutter/aperture/ISO from each CR2 and refuse on mismatch
+
+[exposure]
+# Fixed bracket. Mode dial on M and lens switch on MF are physical - the code
+# checks them but cannot set them.
+aperture = 8.0                  # f-number. Fixed: it is part of the calibration constant k
+iso = 100
+# 2 EV steps, 1/4000 s .. 4 s -> 14 EV of shutter range plus ~11 EV per frame.
+# Covers roughly 0.5 cd/m2 (background, night) to ~200 000 cd/m2 (bare LED) at f/8.
+shutter = ["1/4000", "1/1000", "1/250", "1/60", "1/15", "1/4", "1", "4"]
+
+# How the marked shutter speed maps to the time actually used in the merge.
+#   "apex":    nearest 1/3-stop power of two. "1/60" -> 1/64 s, "1/4000" -> 1/4096 s.
+#              This is how the shutter is actually timed; the marked values are rounded
+#              labels and are up to 7 % off, which shows up as seams in the HDR merge.
+#   "nominal": use the marked value as written.
+# Assumes the camera is at the default 1/3-stop exposure increments (C.Fn I-1 = 0).
+shutter_model = "apex"
+
+# Optional measured correction, effective/assumed, per marked speed (MEASURE).
+# `ugrctl process` prints the frame-to-frame ratios it sees in every bracket;
+# a ratio that is consistently off at one speed belongs here.
+[exposure.shutter_correction]
+# "1/4000" = 1.00
