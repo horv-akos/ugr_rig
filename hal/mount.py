@@ -6,6 +6,15 @@ nothing attached.
 
 Position is held as signed steps from the zero datum. Degrees are a derived
 view, so no rounding error accumulates over a session.
+
+Backlash is tracked per axis as the direction of the last motion. A target is
+only repeatable when it was reached moving along `approach_sign`, so anything
+that may have left an axis the other way (a jog, a nudge, an abort, power-up)
+is remembered, and the next absolute move or `take_up_backlash()` corrects it.
+
+Stopping comes in two kinds. `stop()` is a planned ramp-down: the step count
+stays exact and the position stays certain. `abort()` cuts the DMA stream at
+once: the position becomes an estimate.
 """
 
 from __future__ import annotations
@@ -22,13 +31,16 @@ from typing import Iterable, Iterator
 
 from .backend import PulseBackend, create_backend
 from .config import AxisConfig, MountConfig, load_config
-from .motion import AxisPlan, WaveChunk, build_chunks, plan_timeline
+from .motion import AxisPlan, WaveChunk, build_chunks, plan_timeline, stoppable
 
 log = logging.getLogger(__name__)
 
 MAX_WAVES_IN_FLIGHT = 3
 POLL_S = 0.005
-TX_START_GRACE_S = 0.02  # DMA engine may not report busy the instant a wave is queued
+# Longest wave. With three in flight a stop starts ramping within ~0.3 s. At the
+# head's speeds (a few hundred microsteps/s) a late wave costs a pause, not a
+# lost step, so short waves are safe.
+CHUNK_US = 100_000
 
 
 class MountError(RuntimeError):
@@ -64,6 +76,7 @@ class MoveResult:
     motion_s: float
     settle_s: float
     backlash_stage: bool
+    stopped: bool = False  # stop() ended it short of the target; position is still exact
 
 
 class PanTiltMount:
@@ -76,6 +89,8 @@ class PanTiltMount:
         self._certain = True
         self._enabled = False
         self._abort = threading.Event()
+        self._stop: threading.Event | None = None  # the running motion's stop request
+        self._lash: dict[str, int | None] = {"pan": None, "tilt": None}  # last direction
         self._lock = threading.RLock()
         self._closed = False
 
@@ -133,7 +148,13 @@ class PanTiltMount:
             "pan_steps": self._pan_steps,
             "tilt_steps": self._tilt_steps,
             "moving": self._b.wave_tx_busy(),
+            "backlash_ok": {a.name: self._lash_ok(a) for a in (self.cfg.pan, self.cfg.tilt)},
         }
+
+    def _lash_ok(self, axis: AxisConfig) -> bool:
+        """True when the axis last moved along approach_sign, so the gear lash
+        sits on the side every absolute move arrives from."""
+        return self._lash[axis.name] == axis.approach_sign
 
     # -- power ------------------------------------------------------------ #
 
@@ -151,6 +172,7 @@ class PanTiltMount:
         self._b.write(pins.enable, 1 if pins.enable_active_low else 0)
         self._enabled = False
         self._zeroed = False
+        self._lash = {"pan": None, "tilt": None}
 
     # -- datum ------------------------------------------------------------ #
 
@@ -178,6 +200,8 @@ class PanTiltMount:
         pan_deg: float,
         tilt_deg: float,
         settle: bool = True,
+        speed: float = 1.0,
+        stop: threading.Event | None = None,
     ) -> MoveResult:
         """Absolute move. Blocks until the head has settled.
 
@@ -185,53 +209,207 @@ class PanTiltMount:
         wrong side, the move is split: overshoot past the target, then come
         back along the configured approach direction so gear backlash is taken
         up the same way every time.
+
+        `speed` scales the configured top speed (0 < speed <= 1). `stop` is an
+        event another thread may set to ramp the move down early; pass your
+        own so a stop sent before the move starts is not lost.
         """
         if not self._zeroed:
             raise NotZeroed("set_zero() before commanding an absolute angle")
-        if not self._enabled:
-            raise MountError("drivers are not enabled")
+        self._require_enabled()
+        _check_speed(speed)
 
         with self._lock:
-            self._abort.clear()
-            pan_t = self._target_steps(self.cfg.pan, pan_deg)
-            tilt_t = self._target_steps(self.cfg.tilt, tilt_deg)
+            stop = self._begin(stop)
+            try:
+                pan_t = self._target_steps(self.cfg.pan, pan_deg)
+                tilt_t = self._target_steps(self.cfg.tilt, tilt_deg)
 
-            pan_stage1, pan_needs = self._approach_stage(self.cfg.pan, self._pan_steps, pan_t)
-            tilt_stage1, tilt_needs = self._approach_stage(self.cfg.tilt, self._tilt_steps, tilt_t)
-            two_stage = pan_needs or tilt_needs
+                pan_stage1, pan_needs = self._approach_stage(self.cfg.pan, self._pan_steps, pan_t)
+                tilt_stage1, tilt_needs = self._approach_stage(
+                    self.cfg.tilt, self._tilt_steps, tilt_t)
+                two_stage = pan_needs or tilt_needs
 
-            t0 = time.monotonic()
-            if two_stage:
-                self._run(pan_stage1 - self._pan_steps, tilt_stage1 - self._tilt_steps)
-            self._run(pan_t - self._pan_steps, tilt_t - self._tilt_steps)
-            motion_s = time.monotonic() - t0
+                t0 = time.monotonic()
+                stopped = False
+                if two_stage:
+                    stopped = self._run(pan_stage1 - self._pan_steps,
+                                        tilt_stage1 - self._tilt_steps, speed, stop)
+                if not stopped:
+                    stopped = self._run(pan_t - self._pan_steps, tilt_t - self._tilt_steps,
+                                        speed, stop)
+                motion_s = time.monotonic() - t0
 
-            settle_s = 0.0
-            if settle and self.cfg.settle_ms:
-                settle_s = self.cfg.settle_ms / 1000.0
-                time.sleep(settle_s)
+                settle_s = 0.0
+                if settle and not stopped and self.cfg.settle_ms:
+                    settle_s = self.cfg.settle_ms / 1000.0
+                    time.sleep(settle_s)
 
-            pan_now, tilt_now = self.position()
-            return MoveResult(pan_now, tilt_now, motion_s, settle_s, two_stage)
+                pan_now, tilt_now = self.position()
+                return MoveResult(pan_now, tilt_now, motion_s, settle_s, two_stage, stopped)
+            finally:
+                self._stop = None
 
     def move_by(self, pan_deg: float = 0.0, tilt_deg: float = 0.0, **kw) -> MoveResult:
         pan, tilt = self.position()
         return self.move_to(pan + pan_deg, tilt + tilt_deg, **kw)
 
+    def jog(
+        self,
+        axis: str,
+        direction: int,
+        speed: float = 1.0,
+        stop: threading.Event | None = None,
+    ) -> MoveResult:
+        """Hold-to-move: run one axis until `stop` is set (or `stop()` is
+        called), then ramp down. Blocks.
+
+        With a datum the jog runs at most to the soft limit, ramping down in
+        time to stop on it. Without one the position is unknown, so no limit
+        can apply; a single jog is then capped at `unzeroed_jog_deg`, which is
+        what lets the operator find the fiducial before zeroing.
+
+        No backlash compensation: the axis is left wherever the operator let
+        go, and the lash state records that it may need taking up.
+        """
+        if direction not in (-1, 1):
+            raise ValueError("direction must be +1 or -1")
+        ax = self.cfg.axis(axis)
+        self._require_enabled()
+        _check_speed(speed)
+
+        with self._lock:
+            stop = self._begin(stop)
+            try:
+                current = self._pan_steps if axis == "pan" else self._tilt_steps
+                if self._zeroed:
+                    target = ax.deg_to_steps(ax.max_deg if direction > 0 else ax.min_deg)
+                else:
+                    target = current + direction * ax.deg_to_steps(self.cfg.unzeroed_jog_deg)
+                steps = target - current
+                if steps == 0 or (steps > 0) != (direction > 0):
+                    raise SoftLimit(
+                        f"{axis} is already at its {'max' if direction > 0 else 'min'} "
+                        "soft limit")
+
+                t0 = time.monotonic()
+                pan_s, tilt_s = (steps, 0) if axis == "pan" else (0, steps)
+                stopped = self._run(pan_s, tilt_s, speed, stop)
+                pan_now, tilt_now = self.position()
+                return MoveResult(pan_now, tilt_now, time.monotonic() - t0, 0.0, False, stopped)
+            finally:
+                self._stop = None
+
+    def nudge(
+        self,
+        pan_deg: float = 0.0,
+        tilt_deg: float = 0.0,
+        speed: float = 1.0,
+        stop: threading.Event | None = None,
+    ) -> MoveResult:
+        """Relative step that always ends with the backlash taken up, so where
+        a nudge lands is where a saved position replays.
+
+        With a datum this is `move_by` (soft limits, two-stage approach).
+        Without one there are no limits to check, so each nudge is capped at
+        `unzeroed_jog_deg`, and the approach is restored afterwards.
+        """
+        _check_speed(speed)
+        if self._zeroed:
+            return self.move_by(pan_deg, tilt_deg, settle=False, speed=speed, stop=stop)
+        self.check_nudge(pan_deg, tilt_deg)
+        self._require_enabled()
+        with self._lock:
+            stop = self._begin(stop)
+            try:
+                t0 = time.monotonic()
+                stopped = self._run(self.cfg.pan.deg_to_steps(pan_deg),
+                                    self.cfg.tilt.deg_to_steps(tilt_deg), speed, stop)
+                staged = False
+                if not stopped:
+                    staged, stopped = self._take_up(speed, stop)
+                pan_now, tilt_now = self.position()
+                return MoveResult(pan_now, tilt_now, time.monotonic() - t0, 0.0, staged, stopped)
+            finally:
+                self._stop = None
+
+    def take_up_backlash(
+        self, speed: float = 1.0, stop: threading.Event | None = None
+    ) -> bool:
+        """Leave every axis with its lash on the approach side without changing
+        the commanded position: back off by `backlash_deg`, return along
+        `approach_sign`. The view shifts by the actual backlash, and that is
+        the point: what is then seen is what an absolute move to this angle
+        reproduces. Do it before set_zero() and before recording a position.
+
+        Needs no datum. Returns True if anything moved.
+        """
+        self._require_enabled()
+        _check_speed(speed)
+        with self._lock:
+            stop = self._begin(stop)
+            try:
+                moved, _ = self._take_up(speed, stop)
+                return moved
+            finally:
+                self._stop = None
+
     def jog_steps(self, pan_steps: int = 0, tilt_steps: int = 0) -> None:
         """Raw relative move, no limit check, no backlash compensation, no
         datum required. For bench work only - finding mechanical interference,
         checking direction sense, setting Vref under load."""
-        if not self._enabled:
-            raise MountError("drivers are not enabled")
+        self._require_enabled()
         with self._lock:
-            self._abort.clear()
-            self._run(pan_steps, tilt_steps)
+            stop = self._begin(None)
+            try:
+                self._run(pan_steps, tilt_steps, 1.0, stop)
+            finally:
+                self._stop = None
+
+    def stop(self) -> None:
+        """Ramp the running motion down from another thread. The move returns
+        early with `stopped=True`; the position stays exact. A no-op when
+        idle - pass your own `stop` event to a motion call to avoid racing its
+        start."""
+        ev = self._stop
+        if ev is not None:
+            ev.set()
 
     def abort(self) -> None:
         """Stop transmitting from another thread. The in-progress move raises
         MoveAborted and position becomes an estimate."""
         self._abort.set()
+
+    def _begin(self, stop: threading.Event | None) -> threading.Event:
+        self._abort.clear()
+        self._stop = stop or threading.Event()
+        return self._stop
+
+    def _require_enabled(self) -> None:
+        if not self._enabled:
+            raise MountError("drivers are not enabled")
+
+    def _take_up(self, speed: float, stop: threading.Event) -> tuple[bool, bool]:
+        """(moved, stopped). Caller holds the lock."""
+        back: dict[str, int] = {}
+        for ax, current in ((self.cfg.pan, self._pan_steps), (self.cfg.tilt, self._tilt_steps)):
+            margin = ax.deg_to_steps(ax.backlash_deg)
+            off = 0
+            if margin > 0 and not self._lash_ok(ax):
+                target = current - ax.approach_sign * margin
+                if self._zeroed:  # stay inside the soft limits when they mean something
+                    lo, hi = ax.deg_to_steps(ax.min_deg), ax.deg_to_steps(ax.max_deg)
+                    target = max(lo, min(hi, target))
+                off = target - current
+                if off == 0:
+                    log.warning("%s: no room inside the soft limit to take up backlash",
+                                ax.name)
+            back[ax.name] = off
+        if not any(back.values()):
+            return False, False
+        if self._run(back["pan"], back["tilt"], speed, stop):
+            return True, True
+        return True, self._run(-back["pan"], -back["tilt"], speed, stop)
 
     def wait_idle(self, timeout: float | None = None) -> bool:
         deadline = None if timeout is None else time.monotonic() + timeout
@@ -240,6 +418,22 @@ class PanTiltMount:
                 return False
             time.sleep(POLL_S)
         return True
+
+    def check_target(self, pan_deg: float, tilt_deg: float) -> None:
+        """Raise SoftLimit if an absolute target is outside the soft limits. Moves nothing;
+        lets a caller refuse a request before starting a worker thread for it."""
+        self._target_steps(self.cfg.pan, pan_deg)
+        self._target_steps(self.cfg.tilt, tilt_deg)
+
+    def check_nudge(self, pan_deg: float, tilt_deg: float) -> None:
+        """Raise SoftLimit if `nudge(pan_deg, tilt_deg)` would be refused."""
+        if self._zeroed:
+            pan, tilt = self.position()
+            self.check_target(pan + pan_deg, tilt + tilt_deg)
+            return
+        cap = self.cfg.unzeroed_jog_deg
+        if abs(pan_deg) > cap or abs(tilt_deg) > cap:
+            raise SoftLimit(f"no datum yet: a single nudge is capped at {cap:g} deg")
 
     # -- planning --------------------------------------------------------- #
 
@@ -265,12 +459,11 @@ class PanTiltMount:
 
         delta = target - current
         if delta == 0:
-            # Already there, and every completed move ends on a correct
-            # approach, so the backlash is already taken up the right way.
-            # (jog_steps and an aborted move break that, which is why both
-            # invalidate the datum.)
-            return target, False
-        if (delta > 0) == (axis.approach_sign > 0):
+            if self._lash_ok(axis):
+                return target, False  # already there, lash on the approach side
+            # Already there, but a jog, nudge or abort left the lash the other
+            # way: back off and come in again.
+        elif (delta > 0) == (axis.approach_sign > 0):
             return target, False  # already arriving the right way
 
         overshoot = target - axis.approach_sign * margin
@@ -288,37 +481,44 @@ class PanTiltMount:
             return target, False
         return clamped, True
 
-    def _plans(self, pan_steps: int, tilt_steps: int) -> tuple[AxisPlan, AxisPlan]:
+    def _plans(self, pan_steps: int, tilt_steps: int,
+               speed: float = 1.0) -> tuple[AxisPlan, AxisPlan]:
         def plan(axis: AxisConfig, steps: int) -> AxisPlan:
             spd = axis.steps_per_deg
+            top = axis.max_speed_deg_s * speed
             return AxisPlan(
                 steps=steps,
-                max_speed_sps=axis.max_speed_deg_s * spd,
+                max_speed_sps=top * spd,
                 accel_sps2=axis.accel_deg_s2 * spd,
-                start_speed_sps=axis.start_speed_deg_s * spd,
+                start_speed_sps=min(axis.start_speed_deg_s, top) * spd,
             )
 
         return plan(self.cfg.pan, pan_steps), plan(self.cfg.tilt, tilt_steps)
 
     # -- transmission ----------------------------------------------------- #
 
-    def _run(self, pan_steps: int, tilt_steps: int) -> None:
+    def _run(self, pan_steps: int, tilt_steps: int, speed: float = 1.0,
+             stop: threading.Event | None = None) -> bool:
+        """Emit one two-axis move. Returns True if `stop` cut it short."""
         if pan_steps == 0 and tilt_steps == 0:
-            return
+            return False
 
         self._set_dir(self.cfg.pan, self.cfg.pins.pan_dir, pan_steps)
         self._set_dir(self.cfg.tilt, self.cfg.pins.tilt_dir, tilt_steps)
         if self.cfg.dir_setup_us:
             time.sleep(self.cfg.dir_setup_us / 1e6)
 
-        pan_plan, tilt_plan = self._plans(pan_steps, tilt_steps)
+        pan_plan, tilt_plan = self._plans(pan_steps, tilt_steps, speed)
         events = plan_timeline(pan_plan, tilt_plan)
+        if stop is not None:
+            events = stoppable(events, pan_plan, tilt_plan, stop.is_set)
         chunks = build_chunks(
             events,
             self.cfg.pins.pan_step,
             self.cfg.pins.tilt_step,
             self.cfg.pulse_width_us,
             self._max_pulses,
+            CHUNK_US,
         )
 
         pan_sign = 1 if pan_steps > 0 else -1
@@ -328,6 +528,10 @@ class PanTiltMount:
         with self._lock:
             self._pan_steps += pan_sign * done_pan
             self._tilt_steps += tilt_sign * done_tilt
+            if done_pan:
+                self._lash["pan"] = pan_sign
+            if done_tilt:
+                self._lash["tilt"] = tilt_sign
 
         if partial:
             self._certain = False
@@ -336,12 +540,16 @@ class PanTiltMount:
                 "position is an estimate, re-zero before capturing"
             )
 
-        if done_pan != abs(pan_steps) or done_tilt != abs(tilt_steps):
+        complete = done_pan == abs(pan_steps) and done_tilt == abs(tilt_steps)
+        stopped = stop is not None and stop.is_set() and not complete
+        short = done_pan > abs(pan_steps) or done_tilt > abs(tilt_steps)
+        if short or (not complete and not stopped):
             self._certain = False
             raise MountError(
                 f"step accounting mismatch: emitted {done_pan}/{done_tilt}, "
                 f"planned {abs(pan_steps)}/{abs(tilt_steps)}"
             )
+        return stopped
 
     def _set_dir(self, axis: AxisConfig, gpio: int, steps: int) -> None:
         if steps == 0:
@@ -376,7 +584,7 @@ class PanTiltMount:
                 # between handing a wave to the DMA engine and it going busy.
                 finished = at in later or (
                     not self._b.wave_tx_busy()
-                    and (now - head.queued_at) >= TX_START_GRACE_S
+                    and (now - head.queued_at) >= self._b.tx_start_grace_s
                 )
                 if not finished:
                     break
@@ -453,6 +661,7 @@ class PanTiltMount:
             pass
         self._enabled = False
         self._zeroed = False
+        self._lash = {"pan": None, "tilt": None}
 
     def close(self) -> None:
         self._safe_shutdown()
@@ -470,6 +679,11 @@ class PanTiltMount:
 
 class _Abort(Exception):
     pass
+
+
+def _check_speed(speed: float) -> None:
+    if not 0.0 < speed <= 1.0:
+        raise ValueError(f"speed is a fraction of the configured maximum, got {speed}")
 
 
 def install_signal_handlers(mount: PanTiltMount) -> None:

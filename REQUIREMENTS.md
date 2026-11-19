@@ -277,8 +277,9 @@ The Pi generates step/dir directly through pigpio; all motion logic is Python. S
 - Detect a driver reset (motor rail cycled) before each move; reconfigure and mark position
   uncertain
 
-**Control service and API** (decided 2026-11-19). The head is open-loop, so its position exists
-only in the memory of the process that moved it, and only one process can hold the camera's USB
+**Control service and API** (decided 2026-11-19; mount side built and sim-tested: `hal/mount.py`,
+`service/`, `web/api.py`, `tools/rigctl.py`). The head is open-loop, so its position exists only
+in the memory of the process that moved it, and only one process can hold the camera's USB
 session. One long-running service therefore owns both. The web UI and the `rigctl` CLI are both
 clients of its HTTP API; `mountctl` stays as the bench and measurement tool.
 
@@ -295,6 +296,10 @@ clients of its HTTP API; `mountctl` stays as the bench and measurement tool.
 | `save_position(name)` | Re-approaches the current angle along `approach_sign`, then records it. A jog can arrive from either side but replay always arrives along `approach_sign`, so without this a position saved after a jog the other way replays off by the backlash |
 | `status()` | Angles, enabled, zeroed, certain, moving, speed |
 
+- Saving a position or setting the zero is refused where the backlash cannot be taken up (an
+  axis on its soft limit with no room to back off): such a position would not replay.
+- Before a zero exists, a single jog or nudge is capped at `unzeroed_jog_deg` (mount.toml): no
+  soft limit can apply while the position is unknown, but the fiducial must be findable.
 - After a service restart the head must be re-zeroed. The last position is persisted only as a
   hint: once the drivers are released the head can be moved by hand, or sag.
 - **Position profiles**: an ordered list of named positions per vehicle configuration. Each
@@ -509,7 +514,7 @@ ugr_rig/
 │   ├── motion.py         trapezoidal profiles, merged two-axis pulse stream  (built)
 │   ├── backend.py        pigpio backend + desk simulator                     (built)
 │   ├── mount.py          limits, backlash, step accounting, wave streaming   (built)
-│   │                     continuous jog with controlled stop                 (planned)
+│   │                     jog, nudge, speed, controlled stop, backlash state  (built)
 │   ├── tmc2209.py        UART register layer: config, read-back, status      (next)
 │   ├── camera_config.py  config/camera.toml, shutter arithmetic              (built)
 │   ├── camera.py         gphoto2/PTP: settings, bracket capture, download    (built, mock-tested)
@@ -528,16 +533,17 @@ ugr_rig/
 │   ├── background.py     frame mean (provisional) + hemisphere sweep → L_b   (built)
 │   ├── ugr.py            CIE 117 formula, perception scale                   (built)
 │   └── forward.py        all positions: de-duplication, coverage, forward-gaze UGR (planned)
-├── service/              rig controller: owns mount + camera, state machine, jog heartbeat,
-│                         position profiles, session sequence, job queue      (planned)
+├── service/              rig controller: owns the mount, one motion at a time, jog heartbeat,
+│                         position profiles                                   (built)
+│                         camera, session sequence, job queue                 (planned)
 ├── storage/              data directory, profiles, SQLite index, study archive, exports
 ├── report/               heatmap (built); photo, contribution map, source map, mask overlay,
 │                         corner stamp, forward-gaze map, Excel (XlsxWriter), PDF
 ├── pipeline/             region.py: one direction end to end (built); study.py: all positions
 │                         + forward gaze; optical zeroing, recovery
-├── web/                  FastAPI over service/: HTTP API, three pages, MJPEG live view,
-│                         pushed status
-└── tools/                mountctl, ugrctl: bench CLIs (built); rigctl: client of the service API
+├── web/                  FastAPI over service/: HTTP API for mount + positions (built);
+│                         three pages, MJPEG live view, pushed status          (planned)
+└── tools/                mountctl, ugrctl: bench CLIs; rigctl: client of the service API (built)
 ```
 
 Rationale: `hal` is the only layer that touches hardware, so the whole photometry and analysis
@@ -564,8 +570,8 @@ sim-tested.
    most likely source of unpleasant surprises
 2. `hal/tmc2209.py`, on the bench with a logic analyser, then on the built head: gear ratio, settle
    time, backlash, repeatability, run/hold current
-3. At the desk, alongside 1–2, against the simulators: continuous jog in `hal/mount.py`, preview
-   frames in `hal/camera*.py`, `service/` with its API, `rigctl`
+3. At the desk, alongside 1–2, against the simulators: continuous jog in `hal/mount.py`,
+   `service/` with its API, `rigctl` (built 2026-11-19); preview frames in `hal/camera*.py`
 4. `web` movement calibration page: needed in the cab to record positions, and handy for measuring
    the head
 5. `storage` + the session sequence (`pipeline/study.py`), optical zeroing and the drift check;

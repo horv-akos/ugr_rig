@@ -135,8 +135,10 @@ not throughput-bound.
 The merged two-axis pulse stream is cut into waves under the pulse cap and sent back to back with
 `WAVE_MODE_ONE_SHOT_SYNC`, so there is no seam between waves. At most three waves exist at once,
 so memory is constant in move length. `wave_chain()` loop blocks are **not** used: they repeat a
-fixed pattern and don't fit two axes at unequal step rates. Full travel of both axes is
-~28 400 steps, five waves, 69 s.
+fixed pattern and don't fit two axes at unequal step rates. Waves are also capped at 100 ms, so a
+controlled stop (hold-to-move release, stop button) starts ramping down within ~0.3 s: the
+timeline is generated lazily and, on a stop, each axis ramps down from its current rate. Full
+travel of both axes is ~28 400 steps, ~700 waves, 69 s.
 
 ### 4.4 Driver configuration over UART
 
@@ -212,23 +214,33 @@ class PanTiltMount:
     def disable(self) -> None                       # also drops the datum
     def set_zero(self, pan_deg=0.0, tilt_deg=0.0)   # declare current pose
     def adjust_zero(self, pan_deg=0.0, tilt_deg=0.0) # shift datum, e.g. optical zero
-    def move_to(self, pan_deg, tilt_deg, settle=True) -> MoveResult  # absolute, blocks
-    def move_by(self, pan_deg=0.0, tilt_deg=0.0) -> MoveResult
+    def move_to(self, pan_deg, tilt_deg, settle=True, speed=1.0, stop=None) -> MoveResult
+    def move_by(self, pan_deg=0.0, tilt_deg=0.0, **kw) -> MoveResult
+    def jog(self, axis, direction, speed=1.0, stop=None) -> MoveResult  # hold-to-move
+    def nudge(self, pan_deg=0.0, tilt_deg=0.0, speed=1.0, stop=None) -> MoveResult
+    def take_up_backlash(self, speed=1.0, stop=None) -> bool
+    def check_target(self, pan_deg, tilt_deg)      # SoftLimit, without moving
+    def check_nudge(self, pan_deg, tilt_deg)
     def jog_steps(self, pan_steps=0, tilt_steps=0)  # bench only, bypasses limits
-    def abort(self) -> None                         # thread-safe
+    def stop(self) -> None                          # controlled ramp-down, thread-safe
+    def abort(self) -> None                         # immediate, thread-safe
     def wait_idle(self, timeout=None) -> bool
     def position(self) -> tuple[float, float]
-    def status(self) -> dict
+    def status(self) -> dict                        # includes backlash_ok per axis
     # properties: enabled, is_zeroed, position_certain
     # raises: NotZeroed, SoftLimit, MoveAborted (all MountError)
 ```
 
 Optical zeroing lives in `pipeline/`, not here — it needs both the mount and the camera.
+In the running system the mount is owned by the rig server (`service/controller.py`, served by
+`python -m web`); `tools/rigctl.py` and the web pages are its clients.
 
 | Requirement | Implementation |
 |---|---|
 | Absolute angles | Position is signed steps from zero; degrees are a derived view |
-| Backlash | Two-stage move: if an axis would arrive from the wrong side, overshoot by `backlash_deg`, then return along `approach_sign` |
+| Backlash | Two-stage move: if an axis would arrive from the wrong side, overshoot by `backlash_deg`, then return along `approach_sign`. The last direction per axis is tracked, so a jog or nudge the other way is corrected by the next absolute move or `take_up_backlash()` |
+| Hold-to-move | `jog()` until a stop event, then a ramp-down; soft limits with a datum, `unzeroed_jog_deg` cap without |
+| Stop | `stop()`: planned ramp-down, step count exact, position certain. Waves ≤ 100 ms so it starts within ~0.3 s |
 | Settle | After the last wave, dwell `settle_ms`. Measured, not guessed |
 | Soft limits | Min/max per axis in config, checked before any wave is built. No limit switches |
 | Startup state | Position unknown until a zero is set; `move_to()` raises `NotZeroed` |

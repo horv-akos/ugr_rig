@@ -30,7 +30,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from hal.backend import SimBackend, create_backend  # noqa: E402
 from hal.config import load_config  # noqa: E402
 from hal.motion import AxisPlan, build_chunks, plan_timeline, step_times  # noqa: E402
-from hal.mount import PanTiltMount, install_signal_handlers  # noqa: E402
+from hal.mount import CHUNK_US, PanTiltMount, install_signal_handlers  # noqa: E402
 
 LOG_DIR = Path("measurements")
 
@@ -106,11 +106,12 @@ def cmd_info(args) -> int:
     )
     events = plan_timeline(*plans)
     chunks = list(build_chunks(events, cfg.pins.pan_step, cfg.pins.tilt_step,
-                               cfg.pulse_width_us, 12000))
+                               cfg.pulse_width_us, 12000, CHUNK_US))
     print(
         f"\nfull-travel move: {span_pan} + {span_tilt} steps, "
-        f"{events[-1][0]:.1f} s, {len(chunks)} chained waves"
+        f"{events[-1][0]:.1f} s, {len(chunks)} chained waves of at most {CHUNK_US / 1000:g} ms"
     )
+    print(f"jog or nudge before a zero is set: at most {cfg.unzeroed_jog_deg:g} deg at a time")
     return 0
 
 
@@ -414,8 +415,48 @@ def cmd_selftest(args) -> int:
         pins = cfg.pins
         check("enable line released", sim.levels[pins.enable] == 1)
 
-    print("abort")
+    print("jog")
     import threading as _t
+    sim3 = SimBackend(time_scale=0.0)
+    with PanTiltMount(cfg, sim3) as mount:
+        mount.enable()
+        mount.jog("pan", 1)
+        pan_deg, _ = mount.position()
+        check("without a zero a jog is capped", abs(pan_deg - cfg.unzeroed_jog_deg)
+              < cfg.pan.deg_per_step, f"{pan_deg:.3f} deg, cap {cfg.unzeroed_jog_deg:g}")
+        mount.set_zero()
+        mount.jog("tilt", 1)
+        _, tilt_deg = mount.position()
+        check("with a zero a jog stops on the soft limit",
+              abs(tilt_deg - cfg.tilt.max_deg) < cfg.tilt.deg_per_step, f"{tilt_deg:.3f} deg")
+        mount.move_to(0.0, 0.0, settle=False)
+        mount.jog_steps(-200, 0)
+        check("moving against approach_sign is remembered",
+              not mount.status()["backlash_ok"]["pan"])
+        at = mount.position_steps()
+        before = sim3.rising_edges.get(cfg.pins.pan_step, 0)
+        mount.take_up_backlash()
+        margin = cfg.pan.deg_to_steps(cfg.pan.backlash_deg)
+        emitted = sim3.rising_edges.get(cfg.pins.pan_step, 0) - before
+        check("take_up_backlash: back off and return, position unchanged",
+              mount.position_steps() == at and emitted == 2 * margin
+              and mount.status()["backlash_ok"]["pan"], f"{emitted} edges, margin {margin}")
+
+    sim4 = SimBackend(time_scale=1.0)  # real time, so the stop lands mid-jog
+    with PanTiltMount(cfg, sim4) as mount:
+        mount.enable()
+        mount.set_zero()
+        stop = _t.Event()
+        _t.Timer(0.5, stop.set).start()
+        t0 = time.monotonic()
+        res = mount.jog("pan", 1, stop=stop)
+        steps, _ = mount.position_steps()
+        check("stop ramps a jog down", res.stopped and mount.position_certain,
+              f"{res.pan_deg:.3f} deg, {time.monotonic() - t0:.2f} s")
+        check("every emitted step accounted for",
+              steps == sim4.rising_edges.get(cfg.pins.pan_step, 0), f"{steps} steps")
+
+    print("abort")
     sim2 = SimBackend(time_scale=1.0)  # run a move in real time so it can be cut
     with PanTiltMount(cfg, sim2) as mount:
         mount.enable()

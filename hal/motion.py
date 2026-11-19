@@ -14,13 +14,22 @@ slower axis is never pushed past its limits.
 The resulting step instants from both axes are merged into one timeline and
 emitted as a single pulse stream, which is what lets both STEP pins run on
 independent schedules inside one transmission.
+
+Controlled stop
+---------------
+Waves already handed to the DMA engine cannot be edited, and stopping one
+mid-flight leaves the step count unknown (that is what abort does). So a stop
+has to be planned: the timeline is consumed lazily, and once a stop is
+requested each axis ramps down from its current rate instead of finishing the
+plan. Waves are also capped in duration, so the stop starts within a few wave
+lengths. The step count stays exact.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from math import sqrt
-from typing import Iterator, Sequence
+from math import floor, sqrt
+from typing import Callable, Iterable, Iterator
 
 from .backend import Pulse
 
@@ -125,16 +134,85 @@ def move_duration(pan: AxisPlan, tilt: AxisPlan) -> float:
 
 
 # --------------------------------------------------------------------------- #
+# Controlled stop
+# --------------------------------------------------------------------------- #
+
+
+def ramp_down_times(f: float, f_end: float, accel: float) -> list[float]:
+    """Step instants, seconds after the last step at rate `f`, of a linear ramp
+    down to `f_end`. Empty when there is nothing to ramp (already slow, or no
+    acceleration limit configured)."""
+    if accel <= 0 or f <= f_end:
+        return []
+    n = floor((f * f - f_end * f_end) / (2.0 * accel))
+    return [(f - sqrt(max(0.0, f * f - 2.0 * accel * k))) / accel for k in range(1, n + 1)]
+
+
+def stoppable(
+    events: list[tuple[float, int]],
+    pan: AxisPlan,
+    tilt: AxisPlan,
+    should_stop: Callable[[], bool],
+) -> Iterator[tuple[float, int]]:
+    """Yield the planned events; once `should_stop()` is true, ramp each axis
+    down from its current rate instead.
+
+    The current rate is taken from the last two steps actually yielded on that
+    axis. An axis whose remaining plan is shorter than the ramp-down simply
+    finishes the plan, which already ends in a ramp. An axis that has not
+    stepped twice yet stops where it is.
+    """
+    plans = (pan, tilt)
+    remaining = [abs(pan.steps), abs(tilt.steps)]
+    hist: tuple[list[float], list[float]] = ([], [])
+    last_t = 0.0
+    i = 0
+    stopped = False
+    while i < len(events):
+        if should_stop():
+            stopped = True
+            break
+        t, ax = events[i]
+        i += 1
+        remaining[ax] -= 1
+        h = hist[ax]
+        h.append(t)
+        del h[:-2]
+        last_t = t
+        yield t, ax
+    if not stopped:
+        return
+
+    tail: list[tuple[float, int]] = []
+    for ax, plan in enumerate(plans):
+        h = hist[ax]
+        if remaining[ax] <= 0 or len(h) < 2:
+            continue
+        f = 1.0 / max(h[1] - h[0], 1e-9)
+        f_end = min(plan.start_speed_sps, plan.max_speed_sps)
+        ramp = ramp_down_times(f, f_end, plan.accel_sps2)
+        if len(ramp) >= remaining[ax]:
+            tail.extend(e for e in events[i:] if e[1] == ax)
+        else:
+            tail.extend((h[1] + dt, ax) for dt in ramp)
+    tail.sort()
+    for t, ax in tail:
+        last_t = max(t, last_t)  # never step back behind what is already queued
+        yield last_t, ax
+
+
+# --------------------------------------------------------------------------- #
 # Waveform assembly
 # --------------------------------------------------------------------------- #
 
 
 def build_chunks(
-    events: Sequence[tuple[float, int]],
+    events: Iterable[tuple[float, int]],
     pan_step_gpio: int,
     tilt_step_gpio: int,
     pulse_width_us: int,
     max_pulses: int,
+    max_chunk_us: int | None = None,
 ) -> Iterator[WaveChunk]:
     """Turn a merged event timeline into pigpio waves of bounded length.
 
@@ -144,19 +222,18 @@ def build_chunks(
 
     Chunks are cut on step boundaries and carry the exact inter-chunk delay, so
     transmitting them back to back in sync mode reproduces the timeline without
-    a seam.
-    """
-    if not events:
-        return
+    a seam. `max_chunk_us` also caps each chunk's duration, which bounds how
+    far ahead of a stop request the queued waves reach.
 
+    Events are consumed lazily, one past the end of each chunk, so a stoppable
+    timeline sees a stop request at most one chunk late.
+    """
     masks = {PAN: 1 << pan_step_gpio, TILT: 1 << tilt_step_gpio}
     # Two pulse entries per step worst case, plus headroom for the tail delay.
     per_chunk = max(1, (max_pulses - 4) // 2)
 
     cursor_us = 0  # absolute position of the waveform cursor after the last chunk
-    for start in range(0, len(events), per_chunk):
-        window = events[start : start + per_chunk]
-
+    for window in _windows(events, per_chunk, max_chunk_us):
         edges: dict[int, list[int]] = {}  # us -> [on_mask, off_mask]
         pan_steps = tilt_steps = 0
         for t, axis in window:
@@ -193,3 +270,24 @@ def build_chunks(
 
         cursor_us = keys[-1] + 1  # the 1 us spent closing the last falling edge
         yield WaveChunk(pulses, pan_steps, tilt_steps, sum(p.delay_us for p in pulses))
+
+
+def _windows(
+    events: Iterable[tuple[float, int]], per_chunk: int, max_chunk_us: int | None
+) -> Iterator[list[tuple[float, int]]]:
+    """Group events into chunks of at most `per_chunk` steps, and of at most
+    `max_chunk_us` measured from the end of the previous chunk."""
+    window: list[tuple[float, int]] = []
+    start_us = 0.0
+    for ev in events:
+        t_us = ev[0] * 1e6
+        if window and (
+            len(window) >= per_chunk
+            or (max_chunk_us is not None and t_us - start_us >= max_chunk_us)
+        ):
+            start_us = window[-1][0] * 1e6
+            yield window
+            window = []
+        window.append(ev)
+    if window:
+        yield window

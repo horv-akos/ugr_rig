@@ -26,20 +26,22 @@ Run everything from the repo root. Python 3.11+ (uses `tomllib`).
 
 ```
 pip install -r requirements.txt
-python -m pytest -q tests/                      # all tests, ~5 s, no hardware
+python -m pytest -q tests/                      # all tests, ~10 s, no hardware
 python -m tools.ugrctl --camera sim selftest    # synthetic cab end to end
 python -m tools.mountctl --backend sim selftest # mount logic against the pulse simulator
+python -m tools.rigctl selftest                 # rig server + API + client, private sim server, ~8 s
+python -m web                                   # rig server, simulated head, 127.0.0.1:8000
 python -m tools.ugrctl simulate /tmp/demo && python -m tools.ugrctl process /tmp/demo --masks /tmp/demo/demo_masks.json --k 0.0064
 ```
 
-Run both selftests and pytest before calling a change done.
+Run all three selftests and pytest before calling a change done.
 
 ## Layout
 
 ```
 hal/         ONLY layer that touches hardware
-  config.py motion.py backend.py mount.py    pan-tilt head (pigpio step/dir) + SimBackend
-                                             continuous jog with controlled stop: planned
+  config.py motion.py backend.py mount.py    pan-tilt head (pigpio step/dir) + SimBackend;
+                                             jog, nudge, speed, stop() ramp-down, backlash state
   camera_config.py camera.py camera_sim.py   2000D over python-gphoto2 + FakeCamera
                                              live view (preview frames): planned
   tmc2209.py                                 NOT WRITTEN YET - next hardware task
@@ -49,11 +51,15 @@ analysis/    detection (ROIs, threshold blobs) · background (L_b) · ugr
              planned: glazing/reflections in detection, forward.py (all positions, forward gaze)
 report/      heatmap.png renderer. Photo, maps, source boxes, stamp, Excel, PDF not started
 pipeline/    region.py: one direction, bracket dir -> result dir. study.py not started
-service/     planned: owns mount + camera, jog heartbeat, positions, session sequence, job queue
+service/     controller.py: owns the mount, one motion thread at a time, jog dead-man watchdog
+             · positions.py: position profiles as TOML in <data>/profiles/positions/.
+             Camera, session sequence, job queue not started
 storage/     not started: data directory (profiles/, studies/), SQLite index
-web/         not started: FastAPI over service/, home / movement / camera calibration pages
+web/         api.py: FastAPI over service/ (/api/...); __main__.py runs it (`python -m web`).
+             Pages (home / movement / camera calibration) not started
 config/      mount.toml · camera.toml · analysis.toml (also the template for camera profiles)
-tools/       mountctl.py (head bench CLI) · ugrctl.py (camera + processing CLI) · rigctl planned
+tools/       mountctl.py (head bench CLI) · ugrctl.py (camera + processing CLI)
+             · rigctl.py (HTTP client of the rig server, stdlib only)
 tests/       pytest
 ```
 
@@ -102,8 +108,14 @@ talks to hardware, so it is always testable on a desk against stored brackets.
   along the forward gaze (the headline). Never average UGR values; the scale is logarithmic.
 - Glazing polygons are not exclusions. In `dark` studies sources inside them are reflections and
   count, against their own lower threshold; in `daylight` studies glazing is excluded.
-- Saving a position re-approaches it along `approach_sign` first, or replay lands off by the
-  backlash.
+- Saving a position or setting the zero takes the backlash up along `approach_sign` first
+  (`take_up_backlash()`), or replay lands off by the backlash. The mount tracks the last
+  direction per axis; `status()["backlash_ok"]` shows it.
+- `stop()` (or a `stop` event) is a controlled ramp-down, position stays certain. `abort()` is
+  immediate, position becomes an estimate. Pass motions your own `threading.Event` so a stop
+  sent before the move starts is not lost.
+- Motion refusals (soft limit, no zero, drivers off, busy) are checked before the worker thread
+  starts, so the API returns them as 409 instead of "started".
 - `k` = cd/m² per (DN · N² / (t · ISO)). `k = 0` means uncalibrated, and `process` refuses
   without `--k`.
 - Hardware CLIs follow `mountctl` style: argparse subcommands, `--backend/--camera sim`, a
@@ -116,18 +128,21 @@ Python with type hints, `from __future__ import annotations`, frozen dataclasses
 decoded raw frame in memory at a time). Module docstrings explain *why* (the physics or hardware
 reason), not just what. Plain, terse comments. No new heavy dependencies (OpenCV, pandas) without
 asking: the Pi installs from wheels on a microSD card. Approved: XlsxWriter for the Excel export
-(2026-11-19). The web frontend is fully offline: no CDN, no Node build step.
+(2026-11-19); FastAPI + uvicorn for the server (httpx for its tests). The web frontend is fully
+offline: no CDN, no Node build step (so FastAPI's /docs pages are switched off).
 
 ## Status (2026-11-19)
 
-Built and sim-tested: mount, camera control (fake libgphoto2 only), the whole processing chain
-for one position, heatmap, `ugrctl`. Not yet run on the real 2000D, on real CR2s, or on the Pi.
+Built and sim-tested: mount (incl. jog, nudge, speed, controlled stop, backlash tracking), the
+rig server (`service/` + `web/api.py`) and `rigctl`, camera control (fake libgphoto2 only), the
+whole processing chain for one position, heatmap, `ugrctl`. Not yet run on the real 2000D, on
+real CR2s, or on the Pi.
 
 Plan v0.6 is recorded in `REQUIREMENTS.md` (decided 2026-11-19): live view from the camera's own
 feed, motor control service with hold-to-move jog and position profiles, three web pages,
 windscreen reflections, forward-gaze study rating, report images, metrics, Excel.
 
 Next, roughly in order (`REQUIREMENTS.md` §8): camera on the body (`camera info`, one bracket,
-live view); `hal/tmc2209.py`; at the desk meanwhile, continuous jog + `service/` + `rigctl`;
-movement page; `storage/` + session sequence + home page; reflections, forward gaze, report
-images, Excel; camera calibration page, PDF. Open items list: `REQUIREMENTS.md` §9.
+live view); `hal/tmc2209.py`; at the desk meanwhile, camera preview frames + the movement page;
+`storage/` + session sequence + home page; reflections, forward gaze, report images, Excel;
+camera calibration page, PDF. Open items list: `REQUIREMENTS.md` §9.

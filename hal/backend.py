@@ -46,6 +46,9 @@ class PulseBackend(Protocol):
     def wave_tx_busy(self) -> bool: ...
     def wave_tx_stop(self) -> None: ...
     def wave_get_max_pulses(self) -> int: ...
+    # How long after queueing a wave the engine may still report idle. The mount
+    # will not count a wave finished before this has passed.
+    tx_start_grace_s: float
     def close(self) -> None: ...
 
 
@@ -60,6 +63,8 @@ class PigpioBackend:
     Requires `pigpiod` to be running. Start it with `-t 1` so it uses the PCM
     peripheral for timing rather than PWM (see docs/PIVOT_DETAIL.md §4.2).
     """
+
+    tx_start_grace_s = 0.02  # the DMA engine may not report busy the instant a wave is queued
 
     def __init__(self, host: str = "localhost", port: int = 8888) -> None:
         import pigpio  # imported here so the module loads on a desk
@@ -149,6 +154,7 @@ class SimBackend:
 
     time_scale: float = 0.0
     max_pulses: int = 12000
+    tx_start_grace_s: float = 0.0  # busy is exact here, so no grace is needed
 
     levels: dict[int, int] = field(default_factory=dict)
     rising_edges: dict[int, int] = field(default_factory=dict)

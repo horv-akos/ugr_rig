@@ -10,6 +10,11 @@ Hardware-only: no camera,
 no session logic. Optical zeroing belongs in `pipeline/`, which calls
 `adjust_zero()` with the angle it worked out from the fiducial.
 
+In the running system one process owns the mount: the rig server (`python -m web`,
+`service/controller.py`), with `tools/rigctl.py` and the web pages as clients. The
+head is open-loop, so a process that exits loses the position. `mountctl` opens
+the mount directly and is for bench work and the measurement procedures only.
+
 ```
 config.py    TOML -> dataclasses. Every physical constant lives in config/mount.toml
 motion.py    trapezoidal profile -> merged two-axis timeline -> pigpio pulses
@@ -38,6 +43,7 @@ from hal import PanTiltMount, install_signal_handlers
 with PanTiltMount.from_config() as mount:
     install_signal_handlers(mount)
     mount.enable()
+    mount.take_up_backlash()          # so the datum sits on the approach side
     mount.set_zero()                  # or adjust_zero() after optical zeroing
     result = mount.move_to(30.0, -8.0)  # blocks until settled
     print(mount.position())
@@ -51,9 +57,27 @@ with PanTiltMount.from_config() as mount:
 | `SoftLimit` | target outside the configured range; there are no limit switches |
 | `MoveAborted` | `abort()` was called from another thread. Position becomes an estimate and `position_certain` goes False — re-zero before capturing |
 
-`abort()` is thread-safe and is what the web layer's cancel button calls.
 `disable()` drops both the drive current and the datum, since the head can then
 be turned by hand.
+
+### Jog, nudge, speed, stop
+
+| Call | Does |
+|---|---|
+| `jog(axis, ±1, speed, stop)` | Hold-to-move: runs until `stop` is set, then ramps down. With a datum it ends on the soft limit at worst; without one a single jog is capped at `unzeroed_jog_deg` (mount.toml), which is how the fiducial is found before zeroing |
+| `nudge(pan_deg, tilt_deg, speed, stop)` | Relative step that always ends with the backlash taken up. With a datum it is `move_by`; without one it is capped like a jog |
+| `take_up_backlash()` | For any axis that last moved against `approach_sign`: back off `backlash_deg`, return. Commanded position unchanged; the view shifts by the real backlash, so what is seen is what an absolute move reproduces |
+| `speed=` on every move | Fraction of the configured top speed, 0 < speed ≤ 1. Acceleration is unchanged |
+| `stop()` / a `stop` event | Controlled ramp-down. The step count stays exact, `position_certain` stays True, the call returns with `stopped=True` |
+| `abort()` | Cuts the DMA stream at once. Position becomes an estimate |
+
+Pass your own `threading.Event` as `stop`: it exists before the move starts, so a
+stop sent in that gap is not lost. `stop()` and `abort()` are thread-safe.
+
+The mount remembers per axis which way it last moved (`status()["backlash_ok"]`).
+An absolute move to the angle the head already sits at is a no-op only when the
+lash is on the approach side; after a jog the other way it backs off and comes in
+again.
 
 ## How a move is built
 
@@ -65,10 +89,15 @@ be turned by hand.
    both start and finish together. Stretching only lowers speed and accel.
 4. The two step timelines merge into one, which becomes a single pulse stream —
    this is what lets both STEP pins run independent schedules in one wave.
-5. The stream is cut into waves under the DMA pulse cap and sent back to back in
-   sync mode, so at most three waves exist at once regardless of move length. A
-   full-travel move is about five waves and 69 s.
-6. After `wave_tx_busy()` clears, dwell `settle_ms`.
+5. The stream is cut into waves under the DMA pulse cap and at most `CHUNK_US`
+   (100 ms) long, and sent back to back in sync mode. At most three waves exist
+   at once regardless of move length, so a stop starts ramping within ~0.3 s. A
+   full-travel move is about 700 waves and 69 s. At the head's few hundred
+   microsteps/s a late wave costs a pause, not a lost step.
+6. The timeline is consumed lazily. Once a stop is requested each axis ramps
+   down from its current rate (measured from its last two steps) instead of
+   finishing the plan.
+7. After `wave_tx_busy()` clears, dwell `settle_ms` (skipped when stopped).
 
 Position is kept in signed steps from zero, so nothing accumulates. Degrees are
 a derived view.
@@ -85,7 +114,7 @@ python -m tools.mountctl --backend sim info
 ```
 
 `time_scale` controls simulated wall-clock: `0.0` runs instantly, `1.0` in real
-time (which is what makes the abort test meaningful).
+time (which is what makes the abort and stop tests meaningful).
 
 ## Measuring the head
 
@@ -113,3 +142,6 @@ Settle time (§8.2) needs the camera and is not in here.
 - Aborting mid-move estimates the stopping point from elapsed time within the
   interrupted wave. It is flagged uncertain rather than trusted.
 - `jog_steps()` bypasses limits and backlash by design. Bench use only.
+- At a soft limit there may be no room to back off, so `take_up_backlash()` can
+  leave an axis uncorrected (logged). The rig server then refuses to save a
+  position or set the zero there.

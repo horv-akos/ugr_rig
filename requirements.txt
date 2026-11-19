@@ -12,5 +12,10 @@ gphoto2>=2.5
 # Mount (Pi only; pigpiod must be running)
 pigpio; platform_machine == "aarch64" or platform_machine == "armv7l"
 
+# Rig server (python -m web): HTTP API over the controller. MIT / BSD
+fastapi>=0.110
+uvicorn>=0.29
+
 # Tests
 pytest
+httpx                # FastAPI's TestClient

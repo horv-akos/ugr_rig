@@ -53,21 +53,22 @@ Every parameter that touched a result is stored with it, so any number can be re
 
 ```
 ugr_rig/
-├── hal/          mount: config · motion · backend · mount (built) · continuous jog (planned)
+├── hal/          mount: config · motion · backend · mount, incl. jog and controlled stop (built)
 │                 · tmc2209 (UART, next)
 │                 camera: camera_config · camera (gphoto2) · camera_sim (built) · live view (planned)
 ├── config/       mount.toml · camera.toml · analysis.toml — rig constants, and the template
 │                 for camera profiles
-├── tools/        mountctl.py (head) · ugrctl.py (camera, calibration, processing, selftest)
-│                 · rigctl (client of the service API, planned)
+├── tools/        mountctl.py (head bench) · ugrctl.py (camera, calibration, processing)
+│                 · rigctl.py (client of the rig server: jog, goto, zero, positions)
 ├── photometry/   profile · linearise · hdr · calibration · masks (built)
 ├── analysis/     detection · background · ugr (built) · reflections, forward gaze (planned)
-├── service/      owns mount + camera: jog, positions, session sequence, job queue (planned)
+├── service/      owns the mount: motions, jog heartbeat, position profiles (built)
+│                 · camera, session sequence, job queue (planned)
 ├── storage/      data directory, profiles, SQLite index, study archive, exports
 ├── report/       heatmap (built) · photo, maps, source boxes, masks, stamp, Excel, PDF
 ├── pipeline/     region (built) · study, optical zeroing, recovery
 ├── tests/        pytest: camera control flow against a fake libgphoto2, synthetic end to end
-└── web/          FastAPI: home, movement calibration and camera calibration pages
+└── web/          FastAPI: HTTP API (built) · home, movement and camera calibration pages
 ```
 
 `hal` is the only layer that touches hardware, so the whole photometry and analysis chain is
@@ -78,8 +79,21 @@ and the mount runs against a simulated pulse backend:
 pip install -r requirements.txt
 python -m tools.ugrctl --camera sim selftest
 python -m tools.mountctl --backend sim selftest
+python -m tools.rigctl selftest
 ```
 Most iterations will happen there, not in a truck.
+
+The running system is one server process that owns the head, with `rigctl` (and later the web
+pages) as clients:
+
+```
+python -m web                          # simulated head on http://127.0.0.1:8000
+python -m tools.rigctl mount enable
+python -m tools.rigctl mount zero
+python -m tools.rigctl mount left 2    # right / up / down; goto PAN TILT; speed 0.5
+python -m tools.rigctl mount jog       # interactive, arrow keys
+python -m tools.rigctl positions new truck-a && python -m tools.rigctl positions save truck-a dash
+```
 
 ---
 
@@ -92,7 +106,7 @@ Most iterations will happen there, not in a truck.
 | `photometry` + `analysis` + heatmap, `pipeline/region.py`, `ugrctl` | **Built**, validated on synthetic brackets; needs real CR2s, the target and the meter |
 | `hal/camera.py` — gphoto2 against the 2000D; this is where the surprises live | **Built**, tested against a fake libgphoto2; not yet on the body |
 | Live view (camera preview), MJPEG stream | Not started; confirm on the body first |
-| Continuous jog in `hal/mount.py`, `service/` API, `rigctl` | Not started |
+| Jog, nudge, speed and controlled stop in `hal/mount.py`; `service/` + HTTP API; `rigctl` | **Built**, sim-tested; not yet on hardware |
 | Measure the built head (`docs/PIVOT_DETAIL.md` §8) | After assembly |
 | `storage` + session sequence (`pipeline/study.py`) | Not started |
 | Reflections in detection, forward-gaze combination | Not started |

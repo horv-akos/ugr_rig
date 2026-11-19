@@ -90,6 +90,7 @@ class MountConfig:
     pulse_width_us: int
     enable_settle_ms: int
     dir_setup_us: int
+    unzeroed_jog_deg: float = 15.0  # longest single jog/nudge before a datum exists
     source: Path | None = None
 
     def axis(self, name: str) -> AxisConfig:
@@ -166,5 +167,13 @@ def load_config(path: str | Path | None = None) -> MountConfig:
         pulse_width_us=int(mount.get("pulse_width_us", 5)),
         enable_settle_ms=int(mount.get("enable_settle_ms", 50)),
         dir_setup_us=int(mount.get("dir_setup_us", 100)),
+        unzeroed_jog_deg=_positive(mount.get("unzeroed_jog_deg", 15.0), "unzeroed_jog_deg"),
         source=path,
     )
+
+
+def _positive(value: Any, name: str) -> float:
+    v = float(value)
+    if not v > 0:
+        raise ValueError(f"mount: {name} must be positive")
+    return v

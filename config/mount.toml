@@ -11,6 +11,8 @@ pulse_width_us = 5              # STEP high time; TMC2209 needs >= 100 ns
 dir_setup_us = 100              # DIR settled before the first step
 enable_settle_ms = 50           # driver charge pump after ENABLE goes low
 settle_ms = 800                 # MEASURE: dwell after motion before capture
+unzeroed_jog_deg = 15.0         # longest single jog or nudge before a zero is set. The position
+                                # is unknown then, so no soft limit can protect the head
 
 [pins]                          # BCM numbering. 18 and 19 are reserved by pigpio.
 pan_step = 17
