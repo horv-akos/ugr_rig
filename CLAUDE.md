@@ -26,7 +26,7 @@ Run everything from the repo root. Python 3.11+ (uses `tomllib`).
 
 ```
 pip install -r requirements.txt
-python -m pytest -q tests/                      # all tests, ~15 s, no hardware
+python -m pytest -q tests/                      # all tests, ~30 s, no hardware
 python -m tools.ugrctl --camera sim selftest    # synthetic cab end to end
 python -m tools.mountctl --backend sim selftest # mount logic against the pulse simulator
 python -m tools.rigctl selftest                 # rig server + API + client, private sim server, ~8 s
@@ -51,18 +51,20 @@ photometry/  profile (analysis.toml) · linearise (CR2 -> superpixels) · hdr (D
 analysis/    detection (ROIs, threshold blobs) · background (L_b) · ugr
              planned: glazing/reflections in detection, forward.py (all positions, forward gaze)
 report/      heatmap.png renderer. Photo, maps, source boxes, stamp, Excel, PDF not started
-pipeline/    region.py: one direction, bracket dir -> result dir. study.py not started
+pipeline/    region.py: one direction, bracket dir -> result dir · study.py: worker-process
+             jobs for a study (sweep -> L_b, regions) and its summary
 service/     controller.py: owns the mount and camera, one motion thread at a time, jog
              dead-man watchdog · liveview.py: one grabber thread for all viewers, paused()
+             · study.py: the session sequence (one motion) + its analysis thread
              · positions.py: position profiles as TOML in <data>/profiles/positions/, with
              each position's reference image and masks beside them.
-             Camera, session sequence, job queue not started
-storage/     not started: data directory (profiles/, studies/), SQLite index
+storage/     studies.py: one folder per study, the record · index.py: SQLite over them,
+             rebuilt at every start
 web/         api.py: FastAPI over service/ (/api/...); __main__.py runs it (`python -m web`)
              and prints the reachable URLs (netinfo.py).
              static/: movement page + mask editor (masks.js); plain HTML/CSS/JS ES modules,
              no build step, no CDN.
-             Home and camera calibration pages not started
+             home.html/js: start a study, steps, results, library. Camera page not started
 config/      mount.toml · camera.toml · analysis.toml (also the template for camera profiles)
 tools/       mountctl.py (head bench CLI) · ugrctl.py (camera + processing CLI)
              · rigctl.py (HTTP client of the rig server, stdlib only)
@@ -128,6 +130,12 @@ talks to hardware, so it is always testable on a desk against stored brackets.
   starts, so the API returns them as 409 instead of "started".
 - Live view and capture share one USB link: anything that shoots takes the camera through
   `LiveView.paused()`, and `capture_bracket()` ends live view itself before the first frame.
+- A study folder is the record: `study.json` + frozen copies of the profile and masks +
+  brackets + results. `index.sqlite` is only a search index, rebuilt from the folders at
+  every start. Analysis runs in a worker process (`pipeline/study.py`, plain-dict jobs),
+  never in the server process. Steps not built yet are recorded `skipped` and flagged.
+- The simulated camera shoots small brackets of `CabView`; `processing_setup()` passes the
+  pixel pitch that keeps the 2000D field of view, as a config override in the provenance.
 - Pages are dark on purpose (a bright screen lights the cab and reflects in the glazing), and
   build DOM with `el()` from `web/static/api.js`, never `innerHTML` with operator-typed names.
 - `k` = cd/m² per (DN · N² / (t · ISO)). `k = 0` means uncalibrated, and `process` refuses
@@ -150,15 +158,18 @@ offline: no CDN, no Node build step (so FastAPI's /docs pages are switched off).
 Built and sim-tested: mount (incl. jog, nudge, speed, controlled stop, backlash tracking), the
 rig server (`service/` + `web/api.py`) and `rigctl`, live view (simulated cab on the desk), the
 movement calibration page at `/movement` with reference images and the mask editor, glazing
-masks read by detection (excluded and flagged for now), camera control (fake libgphoto2 only), the whole
-processing chain for one position, heatmap, `ugrctl`. Not yet run on the real 2000D, on real
-CR2s, or on the Pi.
+masks read by detection (excluded and flagged for now), studies end to end (home page at
+`/home`: session sequence, sweep L_b, analysis in a worker process, results, library, zip;
+study folders + SQLite index), camera control (fake libgphoto2 only), the whole processing
+chain for one position, heatmap, `ugrctl`. Not yet run on the real 2000D, on real CR2s, or on
+the Pi.
 
 Plan v0.6 is recorded in `REQUIREMENTS.md` (decided 2026-11-19): live view from the camera's own
 feed, motor control service with hold-to-move jog and position profiles, three web pages,
 windscreen reflections, forward-gaze study rating, report images, metrics, Excel.
 
 Next, roughly in order (`REQUIREMENTS.md` §8): camera on the body (`camera info`, one bracket,
-live view); `hal/tmc2209.py`; at the desk meanwhile, `storage/` + session sequence + home
-page; reflections, forward gaze (with the tiling and coverage map), report images, Excel; camera
-calibration page, PDF. Open items list: `REQUIREMENTS.md` §9.
+live view); `hal/tmc2209.py`; at the desk meanwhile, report images (photo, contribution and
+source maps, stamp, dark-friendly heatmap) + Excel; reflections; forward gaze (with the tiling and
+coverage map); camera calibration page (k, then the calibration shot in the sequence); optical
+zeroing + drift check; PDF. Open items list: `REQUIREMENTS.md` §9.

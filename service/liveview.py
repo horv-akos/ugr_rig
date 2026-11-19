@@ -102,6 +102,9 @@ class LiveView:
         try:
             with self._cam_lock:
                 self._end_preview()
+                if self.camera is not None and not self._connected:
+                    self.camera.connect()   # nobody was watching: it may never have connected
+                    self._connected = True
                 yield self.camera
         finally:
             with self._cond:

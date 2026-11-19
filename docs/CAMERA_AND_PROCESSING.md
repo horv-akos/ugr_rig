@@ -193,6 +193,17 @@ CIE 117: `UGR = 8 log₁₀(0.25 / L_b · Σ L²ω/p²)`, with the perception sc
 
 ---
 
+### 2.8 A whole study (`service/study.py`, `pipeline/study.py`)
+
+The home page records a study of every position in a profile: checks, zero (recorded as
+skipped: optical zeroing is not built), calibration shot (skipped: `k` comes from
+`config/analysis.toml`, or the simulator), a 3 x 3 hemisphere sweep around the forward gaze for
+L_b (§2.6), each position, and the first position again as a repeatability check. Live view is
+off for the whole recording. Each bracket is analysed as it lands, in a worker process, sweep
+first so every position gets the session L_b; the study's summary gives the highest UGR, how
+many positions are over 19 and 22, and the check's UGR difference. Folder layout:
+`REQUIREMENTS.md` §6.
+
 ## 3. Outputs per region
 
 | File | Content |

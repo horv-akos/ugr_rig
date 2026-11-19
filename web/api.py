@@ -35,6 +35,7 @@ from pydantic import BaseModel, Field
 from hal.mount import MountError
 from service.controller import Motion, RigController, RigError
 from service.positions import ProfileError, ProfileNotFound
+from storage import StudyNotFound
 
 STATIC = Path(__file__).resolve().parent / "static"
 BOUNDARY = "frame"
@@ -94,6 +95,15 @@ class Order(BaseModel):
     names: list[str]
 
 
+class StartStudy(BaseModel):
+    profile: str = Field(min_length=1, max_length=80)
+    lighting: Literal["dark", "daylight"]
+    operator: str = Field("", max_length=80)
+    notes: str = Field("", max_length=2000)
+    sweep: bool = True
+    check: bool = True
+
+
 class Run(BaseModel):
     dwell_s: float = Field(0.0, ge=0, le=600)
     speed: float | None = Speed()
@@ -116,6 +126,7 @@ def create_app(rig: RigController) -> FastAPI:
     app.add_exception_handler(RigError, error(409))
     app.add_exception_handler(MountError, error(409))
     app.add_exception_handler(ValueError, error(422))
+    app.add_exception_handler(StudyNotFound, error(404))
 
     def motion(m: Motion | None, wait: bool = False) -> dict[str, Any]:
         if m is None:
@@ -129,7 +140,11 @@ def create_app(rig: RigController) -> FastAPI:
 
     @app.get("/", include_in_schema=False)
     def root() -> RedirectResponse:
-        return RedirectResponse("/movement")  # the home page comes with storage/
+        return RedirectResponse("/home")
+
+    @app.get("/home", include_in_schema=False)
+    def home_page() -> FileResponse:
+        return FileResponse(STATIC / "home.html", headers={"Cache-Control": "no-cache"})
 
     @app.get("/movement", include_in_schema=False)
     def movement_page() -> FileResponse:
@@ -229,6 +244,33 @@ def create_app(rig: RigController) -> FastAPI:
     @app.post("/api/mount/estop")
     def estop() -> dict[str, Any]:
         return motion(rig.estop())
+
+    # -- studies ------------------------------------------------------------- #
+
+    @app.get("/api/studies")
+    def studies(q: str = "") -> list[dict[str, Any]]:
+        """The library: newest first, filtered by `q` over profile, vehicle, operator,
+        notes, lighting and status."""
+        return rig.list_studies(q)
+
+    @app.post("/api/studies", status_code=201)
+    def start_study(body: StartStudy) -> dict[str, Any]:
+        m, sid = rig.start_study(body.profile, body.lighting, body.operator, body.notes,
+                                 body.sweep, body.check)
+        return {"study": sid, "motion": m.summary()}
+
+    @app.get("/api/studies/{sid}")
+    def get_study(sid: str) -> dict[str, Any]:
+        return rig.study(sid)
+
+    @app.get("/api/studies/{sid}/files/{path:path}")
+    def study_file(sid: str, path: str) -> FileResponse:
+        return FileResponse(rig.studies.file(sid, path))
+
+    @app.get("/api/studies/{sid}/results.zip")
+    def study_zip(sid: str) -> Response:
+        return Response(rig.studies.results_zip(sid), media_type="application/zip",
+                        headers={"Content-Disposition": f'attachment; filename="{sid}.zip"'})
 
     # -- position profiles -------------------------------------------------- #
 

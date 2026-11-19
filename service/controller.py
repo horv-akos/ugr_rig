@@ -30,10 +30,14 @@ from typing import Any, Callable
 from hal.backend import SimBackend, create_backend
 from hal.config import MountConfig, load_config
 from hal.mount import MountError, MoveResult, NotZeroed, PanTiltMount
+from storage import StudyIndex, StudyStore
 
 from .liveview import LiveView
 from .positions import (Position, PositionProfile, ProfileStore, check_name, mask_counts,
                         now_iso)
+from .study import LIGHTING, StudyRun, new_record, study_id_for
+
+REPO = Path(__file__).resolve().parents[1]
 
 log = logging.getLogger(__name__)
 
@@ -106,6 +110,13 @@ class RigController:
         self._speed = 1.0
         self._last_ping = 0.0
         self._last_known = self._read_state()
+        self.studies = StudyStore(self.data_dir / "studies")
+        self.index = StudyIndex(self.data_dir / "index.sqlite")
+        self._runs: dict[str, StudyRun] = {}
+        self._pool = None
+        self.software = software_version()
+        self._recover_studies()
+        self.index.rebuild(self.studies)   # the folders are the record; the index follows
         self._closing = threading.Event()
         self._watchdog = threading.Thread(target=self._watch, name="rig-watchdog", daemon=True)
         self._watchdog.start()
@@ -130,8 +141,11 @@ class RigController:
             from hal.camera_config import load_camera_config
             from hal.camera_sim import CabView, FakeCamera
             pulses.record_edges = False  # a long-running server must not keep every edge
+            fov = tuple(geometry["fov_deg"])
+            # Brackets of the simulated cab are small (450 x 300 superpixels) so a study
+            # runs in seconds; processing is told the matching pixel pitch.
             cam = FakeCamera(load_camera_config(), pose=sim_pose(pulses, cfg),
-                             view=CabView(tuple(geometry["fov_deg"])))
+                             view=CabView(fov), bracket_view=CabView(fov, size=(450, 300)))
         elif camera != "none":
             raise ValueError(f"unknown camera {camera!r}: gphoto2, sim or none")
         live = LiveView(cam, camera)
@@ -147,6 +161,85 @@ class RigController:
             m.done.wait(2.0)
         self.live.close()
         self.mount.close()
+        if self._pool is not None:
+            self._pool.shutdown(wait=False, cancel_futures=True)
+        self.index.close()
+
+    # -- studies -------------------------------------------------------------- #
+
+    @property
+    def speed(self) -> float:
+        return self._speed
+
+    def pool(self):
+        """One worker process for analysis, started on first use: numpy in the server
+        process would stall live view and the jog heartbeat."""
+        if self._pool is None:
+            import multiprocessing
+            from concurrent.futures import ProcessPoolExecutor
+            self._pool = ProcessPoolExecutor(max_workers=1,
+                                             mp_context=multiprocessing.get_context("spawn"))
+        return self._pool
+
+    def processing_setup(self) -> tuple[float | None, dict[str, Any], list[str]]:
+        """(k, config overrides, notes) for analysing this camera's brackets."""
+        from photometry.profile import load_analysis_config
+
+        cfg = load_analysis_config()
+        cam = self.live.camera
+        bracket_view = getattr(cam, "bracket_view", None)
+        if self.live.source == "sim" and bracket_view is not None:
+            w = bracket_view.size[0]
+            sensor_mm = cfg.sensor.width_px * cfg.sensor.pixel_pitch_um / 1000
+            pitch = sensor_mm * 1000 / (cfg.processing.binning * w)
+            return (cam.k_true, {"sensor.pixel_pitch_um": pitch, "lens.vignetting_map": ""},
+                    ["simulated camera: k is the simulator's, pixel pitch scaled so its small "
+                     "frames keep the 2000D field of view"])
+        return (cfg.calibration.k or None), {}, []
+
+    def start_study(self, profile: str, lighting: str, operator: str = "", notes: str = "",
+                    sweep: bool = True, check: bool = True) -> tuple[Motion, str]:
+        """Record a study of every position in `profile`; analysis follows on its own."""
+        if lighting not in LIGHTING:
+            raise ValueError(f"lighting must be one of {LIGHTING}")
+        p = self.get_profile(profile)
+        if not p.positions:
+            raise RigError(f"profile {profile!r} has no positions to record")
+        with self._lock:
+            self._require_idle()
+            self._require_enabled()
+            self._require_zero()
+            if self.live.camera is None:
+                raise RigError("no camera: start the server with --camera sim or gphoto2")
+            sid = study_id_for(self, p.name)
+            run = StudyRun(self, new_record(sid, p, lighting, operator, notes, sweep, check,
+                                            self.software))
+            run.prepare(p)
+            self._runs[sid] = run
+            motion = self._start("study", {"study": sid, "profile": p.name}, run.capture)
+        threading.Thread(target=run.analyse, name=f"analysis-{sid}", daemon=True).start()
+        return motion, sid
+
+    def study(self, study_id: str) -> dict[str, Any]:
+        run = self._runs.get(study_id)
+        return dict(run.study) if run is not None else self.studies.load(study_id)
+
+    def list_studies(self, q: str = "") -> list[dict[str, Any]]:
+        return self.index.search(q)
+
+    def _recover_studies(self) -> None:
+        """A study left recording or analysing by a server that stopped is interrupted:
+        say so in its record, so it is never mistaken for a finished one."""
+        for sid in self.studies.ids():
+            try:
+                st = self.studies.load(sid)
+            except (KeyError, ValueError, OSError):
+                continue
+            if st.get("status") in ("recording", "analysing"):
+                st["status"] = "interrupted"
+                st.setdefault("flags", []).append(
+                    "interrupted: the rig server stopped during this study")
+                self.studies.save(st)
 
     # -- status ------------------------------------------------------------- #
 
@@ -172,6 +265,9 @@ class RigController:
                      for a in (self.mount.cfg.pan, self.mount.cfg.tilt)},
             "unzeroed_jog_deg": self.mount.cfg.unzeroed_jog_deg,
             "live_view": self.live.status(),
+            "studies_active": {sid: r.study["status"] for sid, r in list(self._runs.items())
+                               if r.analysing.is_set()},
+            "disk": _disk(self.data_dir),
         })
         return st
 
@@ -579,6 +675,28 @@ class RigController:
             os.replace(tmp, self._state_path)
         except OSError as exc:
             log.warning("could not write %s: %s", self._state_path, exc)
+
+
+def software_version() -> dict[str, Any]:
+    """Git commit of the running code, for provenance: a code change can change a number."""
+    import subprocess
+
+    def git(*args: str) -> str:
+        return subprocess.run(["git", *args], cwd=REPO, capture_output=True, text=True,
+                              timeout=5, check=True).stdout.strip()
+    try:
+        return {"commit": git("rev-parse", "HEAD"), "dirty": bool(git("status", "--porcelain"))}
+    except (OSError, subprocess.SubprocessError):
+        return {"commit": None, "dirty": None}
+
+
+def _disk(path: Path) -> dict[str, float] | None:
+    import shutil
+    try:
+        u = shutil.disk_usage(path if path.exists() else path.parent)
+    except OSError:
+        return None
+    return {"free_gb": round(u.free / 1e9, 1), "total_gb": round(u.total / 1e9, 1)}
 
 
 def camera_geometry() -> dict[str, Any]:

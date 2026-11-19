@@ -68,7 +68,7 @@ ugr_rig/
 ├── report/       heatmap (built) · photo, maps, source boxes, masks, stamp, Excel, PDF
 ├── pipeline/     region (built) · study, optical zeroing, recovery
 ├── tests/        pytest: camera control flow against a fake libgphoto2, synthetic end to end
-└── web/          FastAPI: HTTP API, live view, movement page (built) · home, camera pages
+└── web/          FastAPI: HTTP API, live view, movement and home pages (built) · camera page
 ```
 
 `hal` is the only layer that touches hardware, so the whole photometry and analysis chain is
@@ -114,11 +114,12 @@ where to point the laptop's browser. Bound to 127.0.0.1 over SSH it says how to 
 | Live view (camera preview), MJPEG stream | **Built**; simulated cab on the desk; gphoto2 preview tested against a fake libgphoto2 only, confirm on the body |
 | Jog, nudge, speed and controlled stop in `hal/mount.py`; `service/` + HTTP API; `rigctl` | **Built**, sim-tested; not yet on hardware |
 | Measure the built head (`docs/PIVOT_DETAIL.md` §8) | After assembly |
-| `storage` + session sequence (`pipeline/study.py`) | Not started |
+| `storage` + session sequence + analysis worker (`service/study.py`, `pipeline/study.py`) | **Built**, sim-tested; optical zero, drift check and calibration shot recorded as skipped |
 | Reflections in detection, forward-gaze combination | Not started |
 | `report`: photo, contribution map, source map, masks, stamp, Excel, PDF | Heatmap built; rest not started |
 | `web`: movement calibration page, reference images, mask editor | **Built**, sim-tested; tiling, coverage map and aim check to come |
-| `web`: home, camera calibration pages | Not started |
+| `web`: home page (start a study, steps, results, library, zip) | **Built**, sim-tested |
+| `web`: camera calibration page | Not started |
 
 ---
 

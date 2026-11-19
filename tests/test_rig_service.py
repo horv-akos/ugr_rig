@@ -140,7 +140,8 @@ def test_pages_and_live_view(tmp_path):
     r = RigController.from_config("sim", tmp_path, camera="sim", time_scale=0.0)
     try:
         c = TestClient(create_app(r))
-        assert c.get("/", follow_redirects=False).headers["location"] == "/movement"
+        assert c.get("/", follow_redirects=False).headers["location"] == "/home"
+        assert c.get("/home").status_code == 200
         page = c.get("/movement")
         assert page.status_code == 200 and "movement.js" in page.text
         for f in ("movement.js", "api.js", "style.css"):

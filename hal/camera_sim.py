@@ -126,9 +126,22 @@ def rotation(pan_deg: float, tilt_deg: float) -> np.ndarray:
 class CabView:
     """A night cab on the sphere around the head, angles relative to the power-up
     pose: windscreen and side glass, A-pillars, dash, instrument cluster, a display,
-    dome and reading lights, a faint 10 deg grid, and a fiducial target."""
+    dome and reading lights, and a fiducial target.
+
+    `render` draws it for live view (with a faint 10 deg grid); `luminance` gives the
+    same scene in cd/m2 for brackets, so a simulated study gets a different, consistent
+    result at every position. Lights at or above the 500 cd/m2 threshold: the display,
+    the dome and the reading lights; the cluster, dials and fiducial stay below it.
+    """
 
     FIDUCIAL = (6.0, -3.0)   # az, el: the operator jogs here and sets the zero
+    DISPLAY = (18, 34, -22, -10)            # az0, az1, el0, el1
+    CLUSTER = (-14, 10, -24, -14)
+    DIALS = ((-7.5, -19), (3.5, -19))       # ring centres; radii 3.6 .. 4.2 deg
+    LIGHTS = ((0, 58, 5.0), (-28, 48, 1.6), (28, 48, 1.6))   # dome, reading x2: az, el, r
+    # cd/m2 for `luminance`: a cab at night with its own lights on
+    CD = {"display": 900.0, "cluster": 120.0, "dial": 350.0, "dash": 1.5,
+          "lights": (8000.0, 30000.0, 30000.0), "halo": 40.0, "fiducial": 400.0}
 
     def __init__(self, fov_deg: tuple[float, float] = (63.6, 44.9),
                  size: tuple[int, int] = (720, 480)) -> None:
@@ -145,14 +158,11 @@ class CabView:
         self._rays = self._rays.astype(np.float32)
         self._cache: tuple[tuple, bytes] | None = None
 
-    def render(self, pan_deg: float, tilt_deg: float) -> np.ndarray:
-        """RGB uint8 image (h, w, 3) seen with the head at (pan, tilt). Float32 and one
-        az/el pass per frame: about 20 ms at 720 x 480 on a desktop."""
-        w, h = self.size
+    def _sky(self, pan_deg: float, tilt_deg: float):
+        """az, el per pixel (degrees), plus the two shape tests on them."""
         d = self._rays @ rotation(pan_deg, tilt_deg).T.astype(np.float32)
         az = np.degrees(np.arctan2(d[:, 0], d[:, 2]))
         el = np.degrees(np.arcsin(np.clip(d[:, 1], -1, 1)))
-        img = np.empty((d.shape[0], 3), np.float32)
 
         def dist2(az0: float, el0: float) -> np.ndarray:
             # squared angular distance on az/el, scaled for convergence toward the pole:
@@ -165,23 +175,31 @@ class CabView:
         def box(a0: float, a1: float, e0: float, e1: float) -> np.ndarray:
             return (az >= a0) & (az <= a1) & (el >= e0) & (el <= e1)
 
-        img[:] = (np.clip(0.10 + 0.0012 * el, 0.04, 0.2)[:, None]
-                  * np.array([1.0, 0.95, 0.9], np.float32))                # trim and roof
-        img[el < -8] = (0.07, 0.07, 0.08)                                  # dash
         aa = np.abs(az)
         glass = ((aa <= 55) & (el >= -8) & (el <= 22)) | (
             (aa >= 62) & (aa <= 115) & (el >= -4) & (el <= 26))
+        return az, el, dist2, box, glass
+
+    def render(self, pan_deg: float, tilt_deg: float) -> np.ndarray:
+        """RGB uint8 image (h, w, 3) seen with the head at (pan, tilt). Float32 and one
+        az/el pass per frame: about 20 ms at 720 x 480 on a desktop."""
+        w, h = self.size
+        az, el, dist2, box, glass = self._sky(pan_deg, tilt_deg)
+        img = np.empty((az.shape[0], 3), np.float32)
+        img[:] = (np.clip(0.10 + 0.0012 * el, 0.04, 0.2)[:, None]
+                  * np.array([1.0, 0.95, 0.9], np.float32))                # trim and roof
+        img[el < -8] = (0.07, 0.07, 0.08)                                  # dash
         img[glass] = ((0.05 + 0.004 * np.clip(el[glass] + 8, 0, 40))[:, None]
                       * np.array([0.55, 0.7, 1.0], np.float32))            # night sky
-        img[box(18, 34, -22, -10)] = (0.75, 0.85, 1.0)                     # display
-        img[box(-14, 10, -24, -14)] = (0.10, 0.16, 0.12)                   # cluster
-        for a in (-7.5, 3.5):
-            r2 = dist2(a, -19)
-            img[(r2 <= 4.2 ** 2) & (r2 >= 3.6 ** 2)] = (0.35, 0.9, 0.55)    # dials
+        img[box(*self.DISPLAY)] = (0.75, 0.85, 1.0)
+        img[box(*self.CLUSTER)] = (0.10, 0.16, 0.12)
+        for a, e in self.DIALS:
+            r2 = dist2(a, e)
+            img[(r2 <= 4.2 ** 2) & (r2 >= 3.6 ** 2)] = (0.35, 0.9, 0.55)
         grid = ((np.abs(az * 0.1 - np.rint(az * 0.1)) < 0.012)
                 | (np.abs(el * 0.1 - np.rint(el * 0.1)) < 0.012))       # 10 deg lines
         img[grid] = img[grid] * 0.6 + 0.08
-        for a0, e0, r in ((0, 58, 5.0), (-28, 48, 1.6), (28, 48, 1.6)):   # dome, reading
+        for a0, e0, r in self.LIGHTS:
             r2 = dist2(a0, e0)
             halo = r2 <= (r * 2.2) ** 2
             img[halo] = img[halo] * 0.5 + 0.25
@@ -191,6 +209,29 @@ class CabView:
         img[r2 <= 0.9 ** 2] = (0.0, 0.0, 0.0)
         img[r2 <= 0.35 ** 2] = (1.0, 1.0, 1.0)
         return (np.clip(img, 0, 1) * 255).astype(np.uint8).reshape(h, w, 3)
+
+    def luminance(self, pan_deg: float, tilt_deg: float) -> np.ndarray:
+        """The same scene in cd/m2, float64 (h, w): what a bracket at (pan, tilt) sees."""
+        w, h = self.size
+        cd = self.CD
+        az, el, dist2, box, glass = self._sky(pan_deg, tilt_deg)
+        L = np.clip(2.0 + 0.05 * (el + 20), 1.0, 6.0).astype(np.float64)   # trim and roof
+        L[el < -8] = cd["dash"]
+        L[glass] = 0.3 + 0.02 * np.clip(el[glass] + 8, 0, 40)              # night outside
+        L[box(*self.DISPLAY)] = cd["display"]
+        L[box(*self.CLUSTER)] = cd["cluster"]
+        for a, e in self.DIALS:
+            r2 = dist2(a, e)
+            L[(r2 <= 4.2 ** 2) & (r2 >= 3.6 ** 2)] = cd["dial"]
+        for (a0, e0, r), level in zip(self.LIGHTS, cd["lights"]):
+            r2 = dist2(a0, e0)
+            L[r2 <= (r * 2.2) ** 2] += cd["halo"]
+            L[r2 <= r * r] = level
+        r2 = dist2(*self.FIDUCIAL)
+        L[r2 <= 1.2 ** 2] = cd["fiducial"]
+        L[r2 <= 0.9 ** 2] = 0.5
+        L[r2 <= 0.35 ** 2] = cd["fiducial"]
+        return L.reshape(h, w)
 
     def jpeg(self, pan_deg: float, tilt_deg: float, quality: int = 80) -> bytes:
         """Encoded frame. The head is still most of the time, so the last frame is
@@ -214,18 +255,21 @@ class FakeCamera:
 
     `pose` returns the simulated head's physical (pan, tilt) relative to its
     power-up pose, so live view follows the head. Without it the view is fixed.
+    With `pose` and `bracket_view`, brackets are shot of the cab too
+    (`CabView.luminance` at the bracket view's size) instead of the fixed demo scene.
     """
 
     def __init__(self, config: CameraConfig, scene: SyntheticScene | None = None,
                  seed: int = 0, k_true: float = K_TRUE, vignette: np.ndarray | None = None,
                  pose: Callable[[], tuple[float, float]] | None = None,
-                 view: CabView | None = None) -> None:
+                 view: CabView | None = None, bracket_view: CabView | None = None) -> None:
         self.config = config
         self.scene = scene if scene is not None else demo_scene()
         self.k_true = k_true
         self.vignette = vignette
         self.pose = pose
         self.view = view
+        self.bracket_view = bracket_view
         self._rng = np.random.default_rng(seed)
         self._connected = False
         self.previewing = False
@@ -244,12 +288,18 @@ class FakeCamera:
         self.close()
 
     def info(self) -> dict[str, Any]:
-        h, w = self.scene.L.shape
+        if self.pose and self.bracket_view:
+            w, h = self.bracket_view.size
+        else:
+            h, w = self.scene.L.shape
         return {"model": "FakeCamera (2000D model)", "serial": "SIM", "lens": "ideal 18 mm",
                 "sensor_px": f"{2 * w}x{2 * h}", "connected": self._connected}
 
-    def render(self, t_true: float, aperture: float, iso: int) -> np.ndarray:
-        L = self.scene.L if self.vignette is None else self.scene.L * self.vignette
+    def render(self, t_true: float, aperture: float, iso: int,
+               L: np.ndarray | None = None) -> np.ndarray:
+        L = self.scene.L if L is None else L
+        if self.vignette is not None:
+            L = L * self.vignette
         dn = L * t_true * iso / (self.k_true * aperture ** 2)
         dn = dn + np.sqrt(np.maximum(dn, 0) / GAIN_E_PER_DN) * self._rng.standard_normal(dn.shape)
         mosaic = np.repeat(np.repeat(dn, 2, axis=0), 2, axis=1)
@@ -278,9 +328,12 @@ class FakeCamera:
         out.mkdir(parents=True, exist_ok=True)
         manifest = BracketManifest(format="npz", camera=self.info(), settings=cfg.snapshot(),
                                    started_at=now_iso(), meta=dict(meta or {}))
+        scene_L = None
+        if self.pose and self.bracket_view:   # shoot the cab where the head points
+            scene_L = self.bracket_view.luminance(*self.pose())
         for i, label in enumerate(sorted(cfg.exposure.shutter, key=parse_shutter)):
             t_true = apex_time(parse_shutter(label))
-            mosaic = self.render(t_true, cfg.exposure.aperture, cfg.exposure.iso)
+            mosaic = self.render(t_true, cfg.exposure.aperture, cfg.exposure.iso, scene_L)
             name = f"frame_{i:02d}.npz"
             np.savez(out / name, mosaic=mosaic, cfa=CFA, color_desc=COLOR_DESC,
                      black=np.full(4, BLACK, np.float64), white=float(WHITE), cam_xyz=CAM_XYZ)

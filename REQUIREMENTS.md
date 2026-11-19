@@ -379,7 +379,12 @@ Runs headless on the Pi's own access point; used from a phone or laptop in the c
 
 Three pages, decided 2026-11-19.
 
-**Home: studies**
+**Home: studies** (`/home`, built 2026-11-19 on the simulator: start recording with the session
+sequence, step lights, automatic analysis, per-position cards with the luminance map, study
+summary, library search, results zip, disk space. Not built: camera profile selection (§4.5),
+re-analysis, the raw zip, the comparison view, the shutdown button, and the images of §5.5
+other than the luminance map. Zero and calibration shot are recorded as skipped and flagged
+until optical zeroing and the camera calibration page exist.)
 
 - Select the position profile and the camera profile; set the lighting condition (§3.1), operator
   and notes
@@ -527,6 +532,14 @@ segments. Studies are directories under `studies/` holding the brackets and
 results. SQLite indexes both for the library and search; the files remain the record, so the index
 can always be rebuilt from them.
 
+As built (`storage/studies.py`): `studies/<id>/study.json` (settings, steps, positions, results,
+summary, flags, software commit), `profile.toml` and `masks/<position id>.json` frozen at the
+start, so editing a profile later cannot change what a past study measured,
+`brackets/{sweep_NN, NN_<id>, check_<id>}`, `results/<same>/` (`result.json`, `heatmap.png`,
+`sources.csv`, `luminance.npy`) and `background.json`. The SQLite index is `index.sqlite`,
+rebuilt from the folders at every server start. A study left recording or analysing by a server
+that stopped is marked `interrupted` at the next start.
+
 ---
 
 ## 7. Module layout
@@ -559,16 +572,18 @@ ugr_rig/
 │   ├── ugr.py            CIE 117 formula, perception scale                   (built)
 │   └── forward.py        all positions: de-duplication, coverage, forward-gaze UGR (planned)
 ├── service/              rig controller: owns the mount and camera, one motion at a time, jog
-│                         heartbeat, position profiles, live view             (built)
-│                         session sequence, job queue                         (planned)
-├── storage/              data directory, profiles, SQLite index, study archive, exports
+│                         heartbeat, position profiles, live view; study.py:  (built)
+│                         the session sequence and its analysis queue
+├── storage/              study folders (the record) + SQLite index (search)  (built)
+│                         exports beyond the results zip                      (planned)
 ├── report/               heatmap (built); photo, contribution map, source map, mask overlay,
 │                         corner stamp, forward-gaze map, Excel (XlsxWriter), PDF
-├── pipeline/             region.py: one direction end to end (built); study.py: all positions
-│                         + forward gaze; optical zeroing, recovery
-├── web/                  FastAPI over service/: HTTP API, MJPEG live view, movement page
-│                         (static/: plain HTML/CSS/JS, no build step)         (built)
-│                         home and camera calibration pages                   (planned)
+├── pipeline/             region.py: one direction end to end (built); study.py: worker-process
+│                         jobs for a study (sweep, regions) and its summary   (built)
+│                         forward gaze, optical zeroing                       (planned)
+├── web/                  FastAPI over service/: HTTP API, MJPEG live view, movement and home
+│                         pages (static/: plain HTML/CSS/JS, no build step)   (built)
+│                         camera calibration page                             (planned)
 └── tools/                mountctl, ugrctl: bench CLIs; rigctl: client of the service API (built)
 ```
 
@@ -602,7 +617,8 @@ sim-tested.
    the head (built 2026-11-19, incl. reference images and the mask editor; tiling, coverage
    map and the aim check still to come)
 5. `storage` + the session sequence (`pipeline/study.py`), optical zeroing and the drift check;
-   home page
+   home page (built 2026-11-19 on the simulator, except optical zeroing and the drift check,
+   which need the fiducial centroiding, and the calibration shot, which needs the camera page)
 6. Reflections in detection, the forward-gaze combination, report images and the Excel workbook
 7. Camera calibration page (lens geometry, `k`), validation of the photometry against the target
    and the handheld meter; PDF report
@@ -611,6 +627,12 @@ sim-tested.
 
 ## 9. Open items
 
+- Hemisphere sweep as built: a 3 x 3 grid around the forward gaze (columns ~57°, rows ~40°),
+  shot with the full 8-frame bracket. §3.3 asks for a short bracket: the sweep only needs the
+  background, so the shortest frames could be dropped there. Decide once the real capture time
+  per bracket is known; 9 full brackets plus the moves may take several minutes on the body
+- The heatmap figure is white (matplotlib default): too bright for the dark pages and the cab.
+  Restyle it with the report images (§5.5), with a fixed luminance scale
 - Masks are drawn on the live-view reference image and applied to the bracket frames, so live
   view must show the same field as the CR2. Confirm on the body that Canon live view is not
   cropped or offset relative to the raw frame; if it is, store the offset in the camera profile
