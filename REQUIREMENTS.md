@@ -326,9 +326,14 @@ clients of its HTTP API; `mountctl` stays as the bench and measurement tool.
   browser as an MJPEG stream. It pauses during every bracket and calibration shot, which share the
   USB link, and stays off for the whole recording run: it warms the sensor, and the extra dark
   current shows in the long frames. While it is paused the UI shows capture progress and the last
-  frame instead
+  frame instead. Built 2026-11-19 (`service/liveview.py`): one grabber thread for all viewers,
+  idle when nobody watches, live view ended on the body after 5 s idle and before every bracket;
+  camera errors are shown and retried. On the desk a simulated cab follows the simulated head.
+  The gphoto2 side is tested against a fake libgphoto2 only
 - Live view overlays: crosshair at the optical axis, current pan/tilt, the current position's
-  masks, and the outlines of the other saved positions projected into the view
+  masks, and the outlines of the other saved positions projected into the view. Built, except the
+  masks. The outlines use the nominal field of view from `config/analysis.toml`, so they are as
+  good as the focal length there (MEASURE)
 - Check the body's serial and lens name against the selected camera profile (§4.5)
 
 ### 5.3 Processing
@@ -358,8 +363,11 @@ Runs headless on the Pi's own access point; used from a phone or laptop in the c
 
 - **Fully offline.** The client has no internet on the Pi's network, so every script, style and
   font is served by the Pi: no CDN, no Node build step
+- **Dark by default.** In a dark cab a bright screen adds light to the scene being measured and
+  shows up as a reflection in the windscreen
 - Several clients may be connected; all see the same state, and any of them can stop motion
-- Live status everywhere: current position, capture progress, processing queue, errors
+- Live status everywhere: current position, capture progress, processing queue, errors (the
+  movement page polls `/api/status` at 4 Hz, which doubles as the connection check)
 - Long operations run as background jobs with progress pushed to the UI; the browser can
   disconnect and reconnect without losing a session
 - Shut down the Pi cleanly from the UI. The OS and archive are on a microSD card, which corrupts
@@ -383,7 +391,11 @@ Three pages, decided 2026-11-19.
 - Downloads: a results zip (images, Excel, CSV, JSON) and a raw zip (CR2s), separately. The raw
   set is ~200 MB per position. Disk space indicator
 
-**Movement calibration**
+**Movement calibration** (`/movement`, built 2026-11-19 except the reference image, the tiling
+proposal and coverage map, profile copy/edit, and the mask editor)
+
+On a portrait phone the live view is pinned to the top of the screen, so it stays in sight
+while the arrows are pressed.
 
 - Live view at all times (paused while capturing), with the overlays of §5.2
 - Joystick: hold-to-move buttons per direction, nudge buttons with a step size, speed selector,
@@ -517,10 +529,10 @@ ugr_rig/
 │   │                     jog, nudge, speed, controlled stop, backlash state  (built)
 │   ├── tmc2209.py        UART register layer: config, read-back, status      (next)
 │   ├── camera_config.py  config/camera.toml, shutter arithmetic              (built)
-│   ├── camera.py         gphoto2/PTP: settings, bracket capture, download    (built, mock-tested)
-│   │                     live view preview frames                            (planned)
-│   └── camera_sim.py     synthetic cab scene → Bayer frames                  (built)
-│                         synthetic preview frames                            (planned)
+│   ├── camera.py         gphoto2/PTP: settings, bracket capture, download,   (built, mock-tested)
+│   │                     live view preview frames
+│   └── camera_sim.py     synthetic cab scene → Bayer frames; simulated cab   (built)
+│                         live view that follows the simulated head
 ├── photometry/
 │   ├── profile.py        config/analysis.toml → dataclasses                  (built)
 │   ├── linearise.py      CR2 → Bayer superpixels (rawpy), black level        (built)
@@ -533,16 +545,17 @@ ugr_rig/
 │   ├── background.py     frame mean (provisional) + hemisphere sweep → L_b   (built)
 │   ├── ugr.py            CIE 117 formula, perception scale                   (built)
 │   └── forward.py        all positions: de-duplication, coverage, forward-gaze UGR (planned)
-├── service/              rig controller: owns the mount, one motion at a time, jog heartbeat,
-│                         position profiles                                   (built)
-│                         camera, session sequence, job queue                 (planned)
+├── service/              rig controller: owns the mount and camera, one motion at a time, jog
+│                         heartbeat, position profiles, live view             (built)
+│                         session sequence, job queue                         (planned)
 ├── storage/              data directory, profiles, SQLite index, study archive, exports
 ├── report/               heatmap (built); photo, contribution map, source map, mask overlay,
 │                         corner stamp, forward-gaze map, Excel (XlsxWriter), PDF
 ├── pipeline/             region.py: one direction end to end (built); study.py: all positions
 │                         + forward gaze; optical zeroing, recovery
-├── web/                  FastAPI over service/: HTTP API for mount + positions (built);
-│                         three pages, MJPEG live view, pushed status          (planned)
+├── web/                  FastAPI over service/: HTTP API, MJPEG live view, movement page
+│                         (static/: plain HTML/CSS/JS, no build step)         (built)
+│                         home and camera calibration pages                   (planned)
 └── tools/                mountctl, ugrctl: bench CLIs; rigctl: client of the service API (built)
 ```
 
@@ -571,9 +584,9 @@ sim-tested.
 2. `hal/tmc2209.py`, on the bench with a logic analyser, then on the built head: gear ratio, settle
    time, backlash, repeatability, run/hold current
 3. At the desk, alongside 1–2, against the simulators: continuous jog in `hal/mount.py`,
-   `service/` with its API, `rigctl` (built 2026-11-19); preview frames in `hal/camera*.py`
+   `service/` with its API, `rigctl`, preview frames in `hal/camera*.py` (built 2026-11-19)
 4. `web` movement calibration page: needed in the cab to record positions, and handy for measuring
-   the head
+   the head (built 2026-11-19; reference image, tiling and mask editor still to come)
 5. `storage` + the session sequence (`pipeline/study.py`), optical zeroing and the drift check;
    home page
 6. Reflections in detection, the forward-gaze combination, report images and the Excel workbook

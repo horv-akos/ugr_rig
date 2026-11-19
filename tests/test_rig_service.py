@@ -136,6 +136,36 @@ def test_positions_round_trip(rig, tmp_path):
     assert ".trash" in moved and c.get("/api/positions").json() == []
 
 
+def test_pages_and_live_view(tmp_path):
+    r = RigController.from_config("sim", tmp_path, camera="sim", time_scale=0.0)
+    try:
+        c = TestClient(create_app(r))
+        assert c.get("/", follow_redirects=False).headers["location"] == "/movement"
+        page = c.get("/movement")
+        assert page.status_code == 200 and "movement.js" in page.text
+        for f in ("movement.js", "api.js", "style.css"):
+            assert c.get(f"/static/{f}").status_code == 200
+        g = c.get("/api/camera/geometry").json()
+        assert g["fov_deg"][0] == pytest.approx(63.6, abs=0.1)
+
+        jpg = c.get("/api/live.jpg")
+        assert jpg.headers["content-type"] == "image/jpeg" and jpg.content[:2] == b"\xff\xd8"
+        mj = c.get("/api/live.mjpg?frames=2")
+        assert mj.headers["content-type"].startswith("multipart/x-mixed-replace")
+        assert mj.content.count(b"--frame\r\n") == 2
+        st = c.get("/api/status").json()
+        assert st["live_view"]["source"] == "sim" and "axes" in st
+    finally:
+        r.close()
+
+
+def test_live_view_without_camera(rig):
+    _, c = rig()
+    r = c.get("/api/live.jpg")
+    assert r.status_code == 503
+    assert c.get("/api/status").json()["live_view"]["state"] == "off"
+
+
 def test_restart_hint(rig, tmp_path):
     r, c = rig()
     c.post("/api/mount/enable")

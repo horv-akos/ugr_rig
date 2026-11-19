@@ -55,20 +55,20 @@ Every parameter that touched a result is stored with it, so any number can be re
 ugr_rig/
 ├── hal/          mount: config · motion · backend · mount, incl. jog and controlled stop (built)
 │                 · tmc2209 (UART, next)
-│                 camera: camera_config · camera (gphoto2) · camera_sim (built) · live view (planned)
+│                 camera: camera_config · camera (gphoto2, incl. live view) · camera_sim (built)
 ├── config/       mount.toml · camera.toml · analysis.toml — rig constants, and the template
 │                 for camera profiles
 ├── tools/        mountctl.py (head bench) · ugrctl.py (camera, calibration, processing)
 │                 · rigctl.py (client of the rig server: jog, goto, zero, positions)
 ├── photometry/   profile · linearise · hdr · calibration · masks (built)
 ├── analysis/     detection · background · ugr (built) · reflections, forward gaze (planned)
-├── service/      owns the mount: motions, jog heartbeat, position profiles (built)
+├── service/      owns the mount and camera: motions, jog heartbeat, positions, live view (built)
 │                 · camera, session sequence, job queue (planned)
 ├── storage/      data directory, profiles, SQLite index, study archive, exports
 ├── report/       heatmap (built) · photo, maps, source boxes, masks, stamp, Excel, PDF
 ├── pipeline/     region (built) · study, optical zeroing, recovery
 ├── tests/        pytest: camera control flow against a fake libgphoto2, synthetic end to end
-└── web/          FastAPI: HTTP API (built) · home, movement and camera calibration pages
+└── web/          FastAPI: HTTP API, live view, movement page (built) · home, camera pages
 ```
 
 `hal` is the only layer that touches hardware, so the whole photometry and analysis chain is
@@ -87,7 +87,7 @@ The running system is one server process that owns the head, with `rigctl` (and 
 pages) as clients:
 
 ```
-python -m web                          # simulated head on http://127.0.0.1:8000
+python -m web                          # simulated head + camera; open http://127.0.0.1:8000/movement
 python -m web --host 0.0.0.0           # on the Pi: reachable from the laptop
 python -m tools.rigctl mount enable
 python -m tools.rigctl mount zero
@@ -111,13 +111,14 @@ where to point the laptop's browser. Bound to 127.0.0.1 over SSH it says how to 
 | `hal/tmc2209.py` — UART driver config | Next |
 | `photometry` + `analysis` + heatmap, `pipeline/region.py`, `ugrctl` | **Built**, validated on synthetic brackets; needs real CR2s, the target and the meter |
 | `hal/camera.py` — gphoto2 against the 2000D; this is where the surprises live | **Built**, tested against a fake libgphoto2; not yet on the body |
-| Live view (camera preview), MJPEG stream | Not started; confirm on the body first |
+| Live view (camera preview), MJPEG stream | **Built**; simulated cab on the desk; gphoto2 preview tested against a fake libgphoto2 only, confirm on the body |
 | Jog, nudge, speed and controlled stop in `hal/mount.py`; `service/` + HTTP API; `rigctl` | **Built**, sim-tested; not yet on hardware |
 | Measure the built head (`docs/PIVOT_DETAIL.md` §8) | After assembly |
 | `storage` + session sequence (`pipeline/study.py`) | Not started |
 | Reflections in detection, forward-gaze combination | Not started |
 | `report`: photo, contribution map, source map, masks, stamp, Excel, PDF | Heatmap built; rest not started |
-| `web`: home, movement calibration, camera calibration | Not started |
+| `web`: movement calibration page | **Built**, sim-tested; reference image, tiling and mask editor to come |
+| `web`: home, camera calibration pages | Not started |
 
 ---
 

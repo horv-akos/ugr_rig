@@ -12,8 +12,8 @@ starts, so a stop that arrives before the move begins is not lost.
 Hold-to-move over WiFi needs a dead-man: while a jog runs the client pings, and a watchdog
 ramps the jog down when the pings stop. Phones drop WiFi and lock their screens mid-press.
 
-The camera joins this controller with live view; today it drives the mount and the position
-profiles.
+The camera belongs here too, for the same one-owner reason. Today it serves live view
+(`service.liveview`); bracket capture will take it over through `LiveView.paused()`.
 """
 
 from __future__ import annotations
@@ -27,10 +27,11 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
-from hal.backend import create_backend
-from hal.config import load_config
+from hal.backend import SimBackend, create_backend
+from hal.config import MountConfig, load_config
 from hal.mount import MountError, MoveResult, NotZeroed, PanTiltMount
 
+from .liveview import LiveView
 from .positions import Position, PositionProfile, ProfileStore, check_name, now_iso
 
 log = logging.getLogger(__name__)
@@ -86,8 +87,12 @@ class Motion:
 
 
 class RigController:
-    def __init__(self, mount: PanTiltMount, data_dir: str | Path = DEFAULT_DATA_DIR) -> None:
+    def __init__(self, mount: PanTiltMount, data_dir: str | Path = DEFAULT_DATA_DIR,
+                 live: LiveView | None = None,
+                 geometry: dict[str, Any] | None = None) -> None:
         self.mount = mount
+        self.live = live or LiveView(None)
+        self.geometry = geometry or camera_geometry()
         self.data_dir = Path(data_dir)
         self.profiles = ProfileStore(self.data_dir / "profiles" / "positions")
         self._state_path = self.data_dir / "state.json"
@@ -105,19 +110,40 @@ class RigController:
 
     @classmethod
     def from_config(cls, backend: str = "sim", data_dir: str | Path = DEFAULT_DATA_DIR,
-                    mount_config: str | Path | None = None,
+                    mount_config: str | Path | None = None, camera: str = "none",
                     **backend_kwargs) -> "RigController":
+        """`camera`: "gphoto2" (the 2000D), "sim" (a synthetic cab that follows the simulated
+        head; needs backend "sim"), or "none" (no live view)."""
         cfg = load_config(mount_config)
-        return cls(PanTiltMount(cfg, create_backend(backend, **backend_kwargs)), data_dir)
+        pulses = create_backend(backend, **backend_kwargs)
+        geometry = camera_geometry()
+        cam = None
+        if camera == "gphoto2":
+            from hal.camera import Gphoto2Camera
+            from hal.camera_config import load_camera_config
+            cam = Gphoto2Camera(load_camera_config())
+        elif camera == "sim":
+            if not isinstance(pulses, SimBackend):
+                raise ValueError("the simulated camera follows the simulated head: use backend sim")
+            from hal.camera_config import load_camera_config
+            from hal.camera_sim import CabView, FakeCamera
+            pulses.record_edges = False  # a long-running server must not keep every edge
+            cam = FakeCamera(load_camera_config(), pose=sim_pose(pulses, cfg),
+                             view=CabView(tuple(geometry["fov_deg"])))
+        elif camera != "none":
+            raise ValueError(f"unknown camera {camera!r}: gphoto2, sim or none")
+        live = LiveView(cam, camera)
+        return cls(PanTiltMount(cfg, pulses), data_dir, live, geometry)
 
     def close(self) -> None:
-        """Stop the watchdog, cut any motion and release the drivers."""
+        """Stop the watchdog and live view, cut any motion and release the drivers."""
         self._closing.set()
         m = self._motion
         if m is not None:
             m.stop.set()
             self.mount.abort()
             m.done.wait(2.0)
+        self.live.close()
         self.mount.close()
 
     # -- status ------------------------------------------------------------- #
@@ -137,6 +163,13 @@ class RigController:
             "last_known": self._last_known,
             "limits": {a.name: [a.min_deg, a.max_deg]
                        for a in (self.mount.cfg.pan, self.mount.cfg.tilt)},
+            "axes": {a.name: {"min_deg": a.min_deg, "max_deg": a.max_deg,
+                              "max_speed_deg_s": a.max_speed_deg_s,
+                              "accel_deg_s2": a.accel_deg_s2, "backlash_deg": a.backlash_deg,
+                              "approach_sign": a.approach_sign}
+                     for a in (self.mount.cfg.pan, self.mount.cfg.tilt)},
+            "unzeroed_jog_deg": self.mount.cfg.unzeroed_jog_deg,
+            "live_view": self.live.status(),
         })
         return st
 
@@ -476,6 +509,37 @@ class RigController:
             os.replace(tmp, self._state_path)
         except OSError as exc:
             log.warning("could not write %s: %s", self._state_path, exc)
+
+
+def camera_geometry() -> dict[str, Any]:
+    """Field of view and lens from config/analysis.toml, for live-view overlays. Nominal: the
+    focal length is a MEASURE placeholder until measured."""
+    from photometry.masks import CameraGeometry
+    from photometry.profile import load_analysis_config
+
+    cfg = load_analysis_config()
+    b = cfg.processing.binning
+    g = CameraGeometry.from_config(cfg, (cfg.sensor.height_px // b, cfg.sensor.width_px // b))
+    fh, fv = g.fov_deg()
+    return {"fov_deg": [round(float(fh), 4), round(float(fv), 4)],
+            "focal_mm": cfg.lens.focal_mm, "lens": cfg.lens.name,
+            "width_px": g.width, "height_px": g.height}
+
+
+def sim_pose(sim: SimBackend, cfg: MountConfig) -> Callable[[], tuple[float, float]]:
+    """The simulated head's physical (pan, tilt) relative to power-up, from the signed step
+    counts. Unlike mount.position() it ignores the datum, as the world does."""
+    sim.pair(cfg.pins.pan_step, cfg.pins.pan_dir)
+    sim.pair(cfg.pins.tilt_step, cfg.pins.tilt_dir)
+
+    def pose() -> tuple[float, float]:
+        out = []
+        for axis, pin in ((cfg.pan, cfg.pins.pan_step), (cfg.tilt, cfg.pins.tilt_step)):
+            sign = -1 if axis.invert else 1
+            out.append(sign * sim.net_steps.get(pin, 0) / axis.steps_per_deg)
+        return out[0], out[1]
+
+    return pose
 
 
 def _direction(direction: str) -> tuple[str, int]:

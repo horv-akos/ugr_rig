@@ -142,6 +142,8 @@ class Camera(Protocol):
     def info(self) -> dict[str, Any]: ...
     def capture_bracket(self, out_dir: str | Path,
                         meta: dict[str, Any] | None = None) -> BracketManifest: ...
+    def preview(self) -> bytes: ...       # one live-view JPEG
+    def end_preview(self) -> None: ...    # leave live view (lower the mirror)
 
 
 def create_camera(kind: str, config: CameraConfig, **kwargs) -> Camera:
@@ -223,6 +225,7 @@ class Gphoto2Camera:
         "lens": ("lensname",),
         "model": ("cameramodel", "model"),
         "autopoweroff": ("autopoweroff",),
+        "viewfinder": ("viewfinder", "eosviewfinder"),  # live view on/off (toggle)
     }
     TARGET_CHOICES = {"ram": "Internal RAM", "card": "Memory card"}
     BUSY_RETRIES = 10
@@ -234,6 +237,7 @@ class Gphoto2Camera:
         self._names: dict[str, str] = {}
         self._log_cb = None
         self._choice_cache: dict[str, list[str]] = {}
+        self._preview_on = False
 
     # -- connection ---------------------------------------------------------- #
 
@@ -260,6 +264,7 @@ class Gphoto2Camera:
             except Exception:  # noqa: BLE001 - closing a dead link is fine
                 pass
         self._cam = None
+        self._preview_on = False
 
     def reconnect(self) -> None:
         self.close()
@@ -451,6 +456,36 @@ class Gphoto2Camera:
         return {k: self._choices(k) for k in ("shutter", "aperture", "iso", "format", "target")
                 if k in self._names}
 
+    # -- live view ----------------------------------------------------------- #
+
+    def preview(self) -> bytes:
+        """One live-view frame, as the JPEG the body sends; nothing is decoded here.
+
+        On a Canon EOS the first call raises the mirror into live view, and it stays up
+        until end_preview(). Live view warms the sensor, and the extra dark current shows
+        in the long bracket frames, so the bracket leaves it first and the service keeps it
+        off for a recording run.
+        """
+        cam = self._require()
+        cf = self._call("live view", cam.capture_preview)
+        self._preview_on = True
+        return bytes(memoryview(cf.get_data_and_size()))
+
+    def end_preview(self) -> None:
+        """Leave live view. A no-op when it is not on, or the body has no switch for it."""
+        if not self._preview_on or self._cam is None:
+            return
+        self._preview_on = False
+        if "viewfinder" not in self._names:
+            return
+        try:
+            name, w = self._widget("viewfinder")
+            w.set_value(0)
+            self._call(f"set {name}=0", self._write, name, w)
+            self._drain_events(0.05)
+        except CameraError as exc:
+            log.warning("could not leave live view: %s", exc)
+
     # -- capture ------------------------------------------------------------- #
 
     def capture_bracket(self, out_dir: str | Path,
@@ -462,6 +497,7 @@ class Gphoto2Camera:
         a merge from a partial bracket would silently lose dynamic range.
         """
         cfg = self.config
+        self.end_preview()  # never shoot the bracket from live view: mirror down, sensor cooler
         out = Path(out_dir)
         out.mkdir(parents=True, exist_ok=True)
         manifest = BracketManifest(

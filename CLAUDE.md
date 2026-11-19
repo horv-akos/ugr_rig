@@ -26,11 +26,11 @@ Run everything from the repo root. Python 3.11+ (uses `tomllib`).
 
 ```
 pip install -r requirements.txt
-python -m pytest -q tests/                      # all tests, ~10 s, no hardware
+python -m pytest -q tests/                      # all tests, ~15 s, no hardware
 python -m tools.ugrctl --camera sim selftest    # synthetic cab end to end
 python -m tools.mountctl --backend sim selftest # mount logic against the pulse simulator
 python -m tools.rigctl selftest                 # rig server + API + client, private sim server, ~8 s
-python -m web                                   # rig server, simulated head, 127.0.0.1:8000
+python -m web                                   # rig server, sim head + camera; /movement page
 python -m web --host 0.0.0.0                    # same, reachable from the LAN; prints its URLs
 python -m tools.ugrctl simulate /tmp/demo && python -m tools.ugrctl process /tmp/demo --masks /tmp/demo/demo_masks.json --k 0.0064
 ```
@@ -43,8 +43,8 @@ Run all three selftests and pytest before calling a change done.
 hal/         ONLY layer that touches hardware
   config.py motion.py backend.py mount.py    pan-tilt head (pigpio step/dir) + SimBackend;
                                              jog, nudge, speed, stop() ramp-down, backlash state
-  camera_config.py camera.py camera_sim.py   2000D over python-gphoto2 + FakeCamera
-                                             live view (preview frames): planned
+  camera_config.py camera.py camera_sim.py   2000D over python-gphoto2 + FakeCamera;
+                                             preview()/end_preview() live view, CabView sim
   tmc2209.py                                 NOT WRITTEN YET - next hardware task
 photometry/  profile (analysis.toml) · linearise (CR2 -> superpixels) · hdr (Debevec merge)
              · calibration (k) · masks (pixel direction/solid angle, Guth/Iwata position index)
@@ -52,13 +52,15 @@ analysis/    detection (ROIs, threshold blobs) · background (L_b) · ugr
              planned: glazing/reflections in detection, forward.py (all positions, forward gaze)
 report/      heatmap.png renderer. Photo, maps, source boxes, stamp, Excel, PDF not started
 pipeline/    region.py: one direction, bracket dir -> result dir. study.py not started
-service/     controller.py: owns the mount, one motion thread at a time, jog dead-man watchdog
+service/     controller.py: owns the mount and camera, one motion thread at a time, jog
+             dead-man watchdog · liveview.py: one grabber thread for all viewers, paused()
              · positions.py: position profiles as TOML in <data>/profiles/positions/.
              Camera, session sequence, job queue not started
 storage/     not started: data directory (profiles/, studies/), SQLite index
 web/         api.py: FastAPI over service/ (/api/...); __main__.py runs it (`python -m web`)
              and prints the reachable URLs (netinfo.py).
-             Pages (home / movement / camera calibration) not started
+             static/: movement page (plain HTML/CSS/JS ES modules, no build step, no CDN).
+             Home and camera calibration pages not started
 config/      mount.toml · camera.toml · analysis.toml (also the template for camera profiles)
 tools/       mountctl.py (head bench CLI) · ugrctl.py (camera + processing CLI)
              · rigctl.py (HTTP client of the rig server, stdlib only)
@@ -118,6 +120,10 @@ talks to hardware, so it is always testable on a desk against stored brackets.
   sent before the move starts is not lost.
 - Motion refusals (soft limit, no zero, drivers off, busy) are checked before the worker thread
   starts, so the API returns them as 409 instead of "started".
+- Live view and capture share one USB link: anything that shoots takes the camera through
+  `LiveView.paused()`, and `capture_bracket()` ends live view itself before the first frame.
+- Pages are dark on purpose (a bright screen lights the cab and reflects in the glazing), and
+  build DOM with `el()` from `web/static/api.js`, never `innerHTML` with operator-typed names.
 - `k` = cd/m² per (DN · N² / (t · ISO)). `k = 0` means uncalibrated, and `process` refuses
   without `--k`.
 - Hardware CLIs follow `mountctl` style: argparse subcommands, `--backend/--camera sim`, a
@@ -136,15 +142,16 @@ offline: no CDN, no Node build step (so FastAPI's /docs pages are switched off).
 ## Status (2026-11-19)
 
 Built and sim-tested: mount (incl. jog, nudge, speed, controlled stop, backlash tracking), the
-rig server (`service/` + `web/api.py`) and `rigctl`, camera control (fake libgphoto2 only), the
-whole processing chain for one position, heatmap, `ugrctl`. Not yet run on the real 2000D, on
-real CR2s, or on the Pi.
+rig server (`service/` + `web/api.py`) and `rigctl`, live view (simulated cab on the desk), the
+movement calibration page at `/movement`, camera control (fake libgphoto2 only), the whole
+processing chain for one position, heatmap, `ugrctl`. Not yet run on the real 2000D, on real
+CR2s, or on the Pi.
 
 Plan v0.6 is recorded in `REQUIREMENTS.md` (decided 2026-11-19): live view from the camera's own
 feed, motor control service with hold-to-move jog and position profiles, three web pages,
 windscreen reflections, forward-gaze study rating, report images, metrics, Excel.
 
 Next, roughly in order (`REQUIREMENTS.md` §8): camera on the body (`camera info`, one bracket,
-live view); `hal/tmc2209.py`; at the desk meanwhile, camera preview frames + the movement page;
-`storage/` + session sequence + home page; reflections, forward gaze, report images, Excel;
+live view); `hal/tmc2209.py`; at the desk meanwhile, the movement page's remaining pieces
+(reference image, mask editor); `storage/` + session sequence + home page; reflections, forward gaze, report images, Excel;
 camera calibration page, PDF. Open items list: `REQUIREMENTS.md` §9.

@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#14181d">
+<title>Movement · UGR rig</title>
+<link rel="stylesheet" href="/static/style.css">
+<script type="module" src="/static/movement.js"></script>
+</head>
+<body>
+<header class="top">
+  <div class="brand">UGR rig</div>
+  <nav aria-label="Pages">
+    <span class="nav-off" title="Comes with storage and the session pipeline">Home</span>
+    <a class="active" href="/movement" aria-current="page">Movement</a>
+    <span class="nav-off" title="Comes with camera profiles">Camera</span>
+  </nav>
+  <div id="conn" class="conn" role="status">connecting…</div>
+</header>
+
+<main class="movement">
+  <section class="panel live-panel" aria-label="Live view">
+    <div class="live" id="live-box">
+      <img id="live" alt="Live view from the camera">
+      <canvas id="overlay" aria-hidden="true"></canvas>
+      <div id="live-msg" class="live-msg"></div>
+    </div>
+    <div class="live-bar">
+      <label><input type="checkbox" id="opt-live" checked> Live view</label>
+      <label><input type="checkbox" id="opt-outlines" checked> Saved positions</label>
+      <span id="live-info" class="muted"></span>
+    </div>
+  </section>
+
+  <section class="panel control-panel" aria-label="Head control">
+    <div class="readout">
+      <div><span class="label">Pan</span><span id="pan" class="big">—</span></div>
+      <div><span class="label">Tilt</span><span id="tilt" class="big">—</span></div>
+    </div>
+    <div id="pills" class="pills" aria-live="polite"></div>
+
+    <div class="row">
+      <button id="enable" class="primary">Enable drivers</button>
+      <button id="disable">Release drivers</button>
+    </div>
+
+    <div class="seggroup" role="group" aria-label="Arrow buttons">
+      <button data-mode="hold" title="Move while pressed">Hold</button>
+      <button data-mode="0.1" title="One step per press">0.1°</button>
+      <button data-mode="1">1°</button>
+      <button data-mode="5">5°</button>
+    </div>
+
+    <div class="pad">
+      <button data-dir="up" aria-label="Tilt up">▲</button>
+      <button data-dir="left" aria-label="Pan left">◀</button>
+      <button id="pad-stop" class="mid" aria-label="Stop">■</button>
+      <button data-dir="right" aria-label="Pan right">▶</button>
+      <button data-dir="down" aria-label="Tilt down">▼</button>
+    </div>
+
+    <label class="speed">Speed
+      <input type="range" id="speed" min="5" max="100" step="5" aria-label="Speed">
+      <output id="speed-val"></output>
+    </label>
+
+    <button id="stop" class="stop">STOP<small>space</small></button>
+
+    <div class="row">
+      <button id="zero">Set zero here</button>
+      <button id="backlash" title="Back off and return along the approach direction, so this view is what a saved position replays">Take up backlash</button>
+    </div>
+
+    <form id="goto" class="goto">
+      <label>Pan °<input name="pan" type="number" step="any" inputmode="decimal" required></label>
+      <label>Tilt °<input name="tilt" type="number" step="any" inputmode="decimal" required></label>
+      <button type="submit">Go to</button>
+    </form>
+
+    <div class="keys">Keys: <kbd>←</kbd><kbd>→</kbd><kbd>↑</kbd><kbd>↓</kbd> move,
+      <kbd>space</kbd> stop, <kbd>H</kbd> hold / nudge</div>
+
+    <button id="estop" class="estop">Emergency stop: cuts motion at once, then re-zero</button>
+  </section>
+
+  <section class="panel positions-panel" aria-label="Positions">
+    <h2>Position profile</h2>
+    <div class="row">
+      <select id="profile" aria-label="Position profile"></select>
+      <button id="new-profile">New</button>
+      <button id="delete-profile" class="quiet">Delete</button>
+    </div>
+    <form id="profile-form" class="profile-form" hidden>
+      <label>Name<input name="name" required maxlength="80" autocomplete="off"></label>
+      <label>Vehicle / configuration<input name="vehicle" maxlength="200" autocomplete="off"></label>
+      <label>Zero reference<textarea name="zero_reference" rows="2" maxlength="2000"
+        placeholder="Where the fiducial sits in this cab, how the rig is placed at the eye point"></textarea></label>
+      <div class="row"><button type="submit" class="primary">Create</button>
+        <button type="button" id="cancel-profile" class="quiet">Cancel</button></div>
+    </form>
+    <dl id="profile-info" class="info"></dl>
+    <table class="positions">
+      <thead><tr><th>#</th><th>Position</th><th class="num">Pan °</th><th class="num">Tilt °</th><th></th></tr></thead>
+      <tbody id="pos-rows"></tbody>
+    </table>
+    <form id="save-form" class="row">
+      <input name="name" placeholder="Name for the current view" maxlength="80" required autocomplete="off">
+      <button type="submit" class="primary">Save position</button>
+    </form>
+    <div class="row">
+      <button id="gaze" title="The driver's view of the road: the line of sight of the study's headline UGR">Set forward gaze here</button>
+      <button id="run">Visit all in order</button>
+    </div>
+  </section>
+
+  <section class="panel log-panel" aria-label="Messages">
+    <h2>Messages</h2>
+    <ol id="log" class="log" aria-live="polite"></ol>
+  </section>
+</main>
+</body>
+</html>

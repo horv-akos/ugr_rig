@@ -18,6 +18,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 FRAME_BYTES = 6_000_000
+LIVE_JPEG = bytes([0xFF, 0xD8]) + b"liveview"
 
 
 def make_fake_gp(mode="Manual", busy_on_first_capture=True, truncate=False):
@@ -53,6 +54,7 @@ def make_fake_gp(mode="Manual", busy_on_first_capture=True, truncate=False):
         "lensname": ("EF-S18-55mm f/3.5-5.6 III", None, True),
         "batterylevel": ("100%", None, True),
         "autopoweroff": ("1", ["0", "1", "2"], False),
+        "viewfinder": (0, None, False),                     # toggle: live view on/off
     }
 
     class Widget:
@@ -127,6 +129,11 @@ def make_fake_gp(mode="Manual", busy_on_first_capture=True, truncate=False):
         def file_delete(self, folder, name):
             log.append(f"delete {name}")
 
+        def capture_preview(self):
+            settings["viewfinder"] = (1, None, False)      # Canon raises the mirror
+            log.append("preview")
+            return types.SimpleNamespace(get_data_and_size=lambda: LIVE_JPEG)
+
     gp.Camera = Camera
     return gp, settings, log
 
@@ -164,6 +171,21 @@ def test_bracket_flow():
     assert shots[0] == "capture @ 1/4000" and shots[-1] == "capture @ 4"
     assert sum(e.startswith("delete") for e in log) == 8      # deleted only after verify
     cam.close()
+
+
+def test_live_view_ends_before_the_bracket():
+    gp, settings, log = make_fake_gp(busy_on_first_capture=False)
+    camera_mod, cam = _camera(gp)
+    cam.connect()
+    assert cam.preview() == LIVE_JPEG
+    assert settings["viewfinder"][0] == 1
+    with tempfile.TemporaryDirectory() as d:
+        cam.capture_bracket(d)
+    first_shot = next(i for i, e in enumerate(log) if e.startswith("capture"))
+    assert "set viewfinder=0" in log[:first_shot]      # mirror down before the first frame
+    assert settings["viewfinder"][0] == 0
+    cam.end_preview()                                 # already off: no second write
+    assert log.count("set viewfinder=0") == 1
 
 
 def test_refuses_wrong_mode():

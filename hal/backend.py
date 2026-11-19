@@ -150,16 +150,24 @@ class SimBackend:
 
     `time_scale` multiplies simulated wave duration into wall-clock sleep:
     0.0 runs instantly (tests, dry runs), 1.0 runs in real time (CLI demos).
+
+    `pair(step, dir)` adds a signed step count per STEP pin (`net_steps`), taken
+    from the DIR level at each edge: the simulated head's physical position,
+    which a datum change does not move. `record_edges=False` drops the per-edge
+    log, which a long-running sim server would otherwise grow without bound.
     """
 
     time_scale: float = 0.0
     max_pulses: int = 12000
     tx_start_grace_s: float = 0.0  # busy is exact here, so no grace is needed
+    record_edges: bool = True
 
     levels: dict[int, int] = field(default_factory=dict)
     rising_edges: dict[int, int] = field(default_factory=dict)
     edge_log: list[tuple[int, int, dict[int, int]]] = field(default_factory=list)
+    net_steps: dict[int, int] = field(default_factory=dict)
     total_us: int = 0
+    _dir_of: dict[int, int] = field(default_factory=dict, init=False)
 
     _staged: list[Pulse] = field(default_factory=list, init=False)
     _waves: dict[int, _SimWave] = field(default_factory=dict, init=False)
@@ -176,6 +184,11 @@ class SimBackend:
 
     def write(self, gpio: int, level: int) -> None:
         self.levels[gpio] = level
+
+    def pair(self, step_gpio: int, dir_gpio: int) -> None:
+        """Count signed steps on `step_gpio`: +1 per edge with DIR high, -1 with it low."""
+        self._dir_of[step_gpio] = dir_gpio
+        self.net_steps.setdefault(step_gpio, 0)
 
     # -- waves ------------------------------------------------------------ #
 
@@ -258,7 +271,11 @@ class SimBackend:
             for gpio in _bits(pulse.on_mask):
                 if self.levels.get(gpio, 0) == 0:
                     self.rising_edges[gpio] = self.rising_edges.get(gpio, 0) + 1
-                    self.edge_log.append((self.total_us, gpio, dict(self.levels)))
+                    if gpio in self._dir_of:
+                        up = self.levels.get(self._dir_of[gpio], 0) == 1
+                        self.net_steps[gpio] += 1 if up else -1
+                    if self.record_edges:
+                        self.edge_log.append((self.total_us, gpio, dict(self.levels)))
                 self.levels[gpio] = 1
             for gpio in _bits(pulse.off_mask):
                 self.levels[gpio] = 0

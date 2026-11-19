@@ -79,6 +79,27 @@ The simulator writes the same layout with `.npz` frames.
 
 ---
 
+### 1.7 Live view
+
+`Gphoto2Camera.preview()` returns one live-view JPEG (`capture_preview`); on a Canon EOS the first
+call raises the mirror into live view, and `end_preview()` lowers it again through the
+`viewfinder` / `eosviewfinder` toggle. `capture_bracket()` calls `end_preview()` before the first
+frame, so a bracket is never shot from live view: live view warms the sensor, and the extra dark
+current shows in the 1 s and 4 s frames.
+
+The rig server owns the camera (`service/liveview.py`): one grabber thread serves every browser,
+at up to 10 fps, only while someone watches; 5 s after the last viewer leaves it ends live view on
+the body. Capture takes the camera through `LiveView.paused()`. Errors (dial off M, cable out,
+asleep) show on the page and are retried every 2 s. `/api/live.mjpg` is the stream,
+`/api/live.jpg` one frame.
+
+`FakeCamera.preview()` renders `CabView`, a night cab drawn on the sphere around the head, for
+wherever the simulated head points, with a fiducial dot 6° right and 3° below the power-up pose
+to practise zeroing on. It is illustrative only, not the bracket scene.
+
+Tested against a fake libgphoto2 only. Still to confirm on the body: that preview works, its
+frame size and rate, and that `viewfinder` = 0 hands back to normal capture.
+
 ## 2. Processing
 
 ### 2.1 Linearise (`photometry/linearise.py`)
@@ -198,7 +219,7 @@ ugrctl sweep DIR... [-o J]
 | | |
 |---|---|
 | Synthetic end to end (`selftest`) | k recovered to 0.01 %; background luminance median error 0.6 %; source luminances within 0.1 %; UGR equal to ground truth (17.32 vs 17.32); clipped LED flagged; window excluded; apex vs label timing seams detected |
-| Camera control flow | Against a fake libgphoto2 (`tests/`): settings order, busy retry, verified-before-delete, wrong mode refused, truncated download refused |
+| Camera control flow | Against a fake libgphoto2 (`tests/`): settings order, busy retry, verified-before-delete, wrong mode refused, truncated download refused, live view ended before the bracket |
 | **Not tested** | The real 2000D, real CR2 files, the real colour matrix, real shutter timing, processing speed on the Pi 4 (desktop: ~8 s per region at full size) |
 
 ## 6. Next on the body

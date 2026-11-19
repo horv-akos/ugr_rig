@@ -20,6 +20,8 @@ class SensorConfig:
     pixel_pitch_um: float
     saturation_fraction: float
     noise_floor_fraction: float
+    width_px: int = 6000     # raw frame; working resolution is this / binning
+    height_px: int = 4000
 
 
 @dataclass(frozen=True)
@@ -124,6 +126,8 @@ def load_analysis_config(path: str | Path | None = None) -> AnalysisConfig:
             pixel_pitch_um=float(s["pixel_pitch_um"]),
             saturation_fraction=float(s.get("saturation_fraction", 0.92)),
             noise_floor_fraction=float(s.get("noise_floor_fraction", 0.002)),
+            width_px=int(s.get("width_px", 6000)),
+            height_px=int(s.get("height_px", 4000)),
         ),
         lens=LensConfig(
             name=str(l.get("name", "")),

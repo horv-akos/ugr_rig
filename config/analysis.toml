@@ -4,6 +4,8 @@
 # be recomputed later. Values marked MEASURE are placeholders.
 
 [sensor]                        # Canon EOS 2000D, APS-C 22.3 x 14.9 mm, 6000 x 4000
+width_px = 6000                 # raw frame size; the working resolution is this / binning
+height_px = 4000
 pixel_pitch_um = 3.72           # raw pixel pitch. Geometry uses pitch x image size, so a few
                                 # pixels of border crop do not move the optical axis maths
 saturation_fraction = 0.92      # MEASURE: fraction of (white - black) treated as clipped.

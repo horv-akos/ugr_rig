@@ -6,26 +6,38 @@ can keep pinging a jog or send a stop. Pass `"wait": true` to block until the mo
 instead (what `rigctl` does for goto and nudge).
 
 The interactive docs pages (/docs, /redoc) are switched off: they load their scripts from a
-CDN, and the Pi's own WiFi has no internet. `/openapi.json` still describes every route.
+CDN, and the Pi's own WiFi has no internet. `/openapi.json` still describes every route. The
+pages are plain HTML, CSS and JavaScript under `web/static/`, served as they are: no build step.
+
+Live view is `/api/live.mjpg`, an MJPEG stream any `<img>` can show; `/api/live.jpg` is one
+fresh frame.
 
 Errors come back as `{"error": <type>, "detail": <message>}`:
 
     404  unknown profile or position
     409  the rig cannot do it right now: busy, no zero, soft limit, drivers off, aborted
     422  the request itself is wrong: bad direction, speed out of range, bad name
+    503  no live-view frame (no camera, or it is not answering)
 """
 
 from __future__ import annotations
 
-from typing import Any, Literal
+import asyncio
+from pathlib import Path
+from typing import Any, AsyncIterator, Literal
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import (FileResponse, JSONResponse, RedirectResponse, Response,
+                               StreamingResponse)
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from hal.mount import MountError
 from service.controller import Motion, RigController, RigError
 from service.positions import ProfileError, ProfileNotFound
+
+STATIC = Path(__file__).resolve().parent / "static"
+BOUNDARY = "frame"
 
 Direction = Literal["left", "right", "up", "down"]
 
@@ -106,11 +118,62 @@ def create_app(rig: RigController) -> FastAPI:
         summary = rig.wait(m) if wait else m.summary()
         return {"motion": summary, "status": rig.status()}
 
+    # -- pages -------------------------------------------------------------- #
+
+    app.mount("/static", StaticFiles(directory=STATIC), name="static")
+
+    @app.get("/", include_in_schema=False)
+    def root() -> RedirectResponse:
+        return RedirectResponse("/movement")  # the home page comes with storage/
+
+    @app.get("/movement", include_in_schema=False)
+    def movement_page() -> FileResponse:
+        return FileResponse(STATIC / "movement.html", headers={"Cache-Control": "no-cache"})
+
     # -- status and power --------------------------------------------------- #
 
     @app.get("/api/status")
     def status() -> dict[str, Any]:
         return rig.status()
+
+    @app.get("/api/camera/geometry")
+    def geometry() -> dict[str, Any]:
+        return rig.geometry
+
+    # -- live view ----------------------------------------------------------- #
+
+    @app.get("/api/live.jpg")
+    def live_jpg() -> Response:
+        frame = rig.live.snapshot(timeout=5.0)
+        if frame is None:
+            return JSONResponse(status_code=503, content={
+                "error": "NoFrame", "detail": rig.live.status()["error"] or
+                f"no live-view frame (camera: {rig.live.source})"})
+        return Response(frame, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
+    @app.get("/api/live.mjpg")
+    async def live_mjpg(request: Request, frames: int | None = None) -> StreamingResponse:
+        """MJPEG stream of the latest frames. `frames` ends it after that many (tests)."""
+
+        async def stream() -> AsyncIterator[bytes]:
+            rig.live.subscribe()
+            try:
+                seq, sent = -1, 0
+                while frames is None or sent < frames:
+                    if await request.is_disconnected():
+                        break
+                    s, frame = rig.live.latest()
+                    if frame is None or s == seq:
+                        await asyncio.sleep(0.02)
+                        continue
+                    seq, sent = s, sent + 1
+                    yield (f"--{BOUNDARY}\r\nContent-Type: image/jpeg\r\n"
+                           f"Content-Length: {len(frame)}\r\n\r\n").encode() + frame + b"\r\n"
+            finally:
+                rig.live.unsubscribe()
+
+        return StreamingResponse(stream(), headers={"Cache-Control": "no-store"},
+                                 media_type=f"multipart/x-mixed-replace; boundary={BOUNDARY}")
 
     @app.post("/api/mount/enable")
     def enable() -> dict[str, Any]:

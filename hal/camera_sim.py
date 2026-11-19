@@ -10,13 +10,20 @@ The scene is grey (all four Bayer channels equal), so any luminance weights
 that sum to 1 recover it exactly. The shutter is timed in true APEX steps, so
 running the merge with `shutter_model = "nominal"` shows the seams that the
 apex model removes.
+
+Live view is a separate, illustrative scene: a cab drawn on the sphere around
+the head (`CabView`), rendered for wherever the simulated head points, so the
+movement page can be used at a desk. It includes a fiducial dot off-centre from
+the power-up pose, to practise zeroing on. It is not the bracket scene, and its
+pixel values mean nothing photometrically.
 """
 
 from __future__ import annotations
 
+import io
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import numpy as np
 
@@ -101,17 +108,127 @@ def demo_scene(h: int = 1000, w: int = 1500, seed: int = 1,
     )
 
 
+# --------------------------------------------------------------------------- #
+# live view
+# --------------------------------------------------------------------------- #
+
+
+def rotation(pan_deg: float, tilt_deg: float) -> np.ndarray:
+    """Camera frame -> cabin frame. Same convention as photometry.masks.rotation
+    (pan positive = right, tilt positive = up); repeated here so hal does not
+    import the layers above it."""
+    p, t = np.radians(pan_deg), np.radians(tilt_deg)
+    z = np.array([np.sin(p) * np.cos(t), np.sin(t), np.cos(p) * np.cos(t)])
+    x = np.array([np.cos(p), 0.0, -np.sin(p)])
+    return np.stack([x, np.cross(z, x), z], axis=1)
+
+
+class CabView:
+    """A night cab on the sphere around the head, angles relative to the power-up
+    pose: windscreen and side glass, A-pillars, dash, instrument cluster, a display,
+    dome and reading lights, a faint 10 deg grid, and a fiducial target."""
+
+    FIDUCIAL = (6.0, -3.0)   # az, el: the operator jogs here and sets the zero
+
+    def __init__(self, fov_deg: tuple[float, float] = (63.6, 44.9),
+                 size: tuple[int, int] = (720, 480)) -> None:
+        self.fov_deg = fov_deg
+        self.size = size
+        w, h = size
+        tx = np.tan(np.radians(fov_deg[0]) / 2)
+        ty = np.tan(np.radians(fov_deg[1]) / 2)
+        u = (np.arange(w) + 0.5) / w * 2 - 1
+        v = 1 - (np.arange(h) + 0.5) / h * 2
+        x, y = np.meshgrid(u * tx, v * ty)
+        rays = np.stack([x, y, np.ones_like(x)], axis=-1)
+        self._rays = (rays / np.linalg.norm(rays, axis=-1, keepdims=True)).reshape(-1, 3)
+        self._rays = self._rays.astype(np.float32)
+        self._cache: tuple[tuple, bytes] | None = None
+
+    def render(self, pan_deg: float, tilt_deg: float) -> np.ndarray:
+        """RGB uint8 image (h, w, 3) seen with the head at (pan, tilt). Float32 and one
+        az/el pass per frame: about 20 ms at 720 x 480 on a desktop."""
+        w, h = self.size
+        d = self._rays @ rotation(pan_deg, tilt_deg).T.astype(np.float32)
+        az = np.degrees(np.arctan2(d[:, 0], d[:, 2]))
+        el = np.degrees(np.arcsin(np.clip(d[:, 1], -1, 1)))
+        img = np.empty((d.shape[0], 3), np.float32)
+
+        def dist2(az0: float, el0: float) -> np.ndarray:
+            # squared angular distance on az/el, scaled for convergence toward the pole:
+            # exact enough for an illustration, and cheap. No az wrap needed: every
+            # round feature sits well away from az = +-180.
+            da = (az - np.float32(az0)) * np.float32(np.cos(np.radians(el0)))
+            de = el - np.float32(el0)
+            return da * da + de * de
+
+        def box(a0: float, a1: float, e0: float, e1: float) -> np.ndarray:
+            return (az >= a0) & (az <= a1) & (el >= e0) & (el <= e1)
+
+        img[:] = (np.clip(0.10 + 0.0012 * el, 0.04, 0.2)[:, None]
+                  * np.array([1.0, 0.95, 0.9], np.float32))                # trim and roof
+        img[el < -8] = (0.07, 0.07, 0.08)                                  # dash
+        aa = np.abs(az)
+        glass = ((aa <= 55) & (el >= -8) & (el <= 22)) | (
+            (aa >= 62) & (aa <= 115) & (el >= -4) & (el <= 26))
+        img[glass] = ((0.05 + 0.004 * np.clip(el[glass] + 8, 0, 40))[:, None]
+                      * np.array([0.55, 0.7, 1.0], np.float32))            # night sky
+        img[box(18, 34, -22, -10)] = (0.75, 0.85, 1.0)                     # display
+        img[box(-14, 10, -24, -14)] = (0.10, 0.16, 0.12)                   # cluster
+        for a in (-7.5, 3.5):
+            r2 = dist2(a, -19)
+            img[(r2 <= 4.2 ** 2) & (r2 >= 3.6 ** 2)] = (0.35, 0.9, 0.55)    # dials
+        grid = ((np.abs(az * 0.1 - np.rint(az * 0.1)) < 0.012)
+                | (np.abs(el * 0.1 - np.rint(el * 0.1)) < 0.012))       # 10 deg lines
+        img[grid] = img[grid] * 0.6 + 0.08
+        for a0, e0, r in ((0, 58, 5.0), (-28, 48, 1.6), (28, 48, 1.6)):   # dome, reading
+            r2 = dist2(a0, e0)
+            halo = r2 <= (r * 2.2) ** 2
+            img[halo] = img[halo] * 0.5 + 0.25
+            img[r2 <= r * r] = (1.0, 0.98, 0.92)
+        r2 = dist2(*self.FIDUCIAL)
+        img[r2 <= 1.2 ** 2] = (0.95, 0.95, 0.95)
+        img[r2 <= 0.9 ** 2] = (0.0, 0.0, 0.0)
+        img[r2 <= 0.35 ** 2] = (1.0, 1.0, 1.0)
+        return (np.clip(img, 0, 1) * 255).astype(np.uint8).reshape(h, w, 3)
+
+    def jpeg(self, pan_deg: float, tilt_deg: float, quality: int = 80) -> bytes:
+        """Encoded frame. The head is still most of the time, so the last frame is
+        reused while the pose has not changed."""
+        key = (round(pan_deg, 4), round(tilt_deg, 4), quality)
+        if self._cache is not None and self._cache[0] == key:
+            return self._cache[1]
+        from PIL import Image, ImageDraw
+
+        im = Image.fromarray(self.render(pan_deg, tilt_deg))
+        ImageDraw.Draw(im).text((8, self.size[1] - 18), "SIMULATED VIEW", fill=(255, 190, 60))
+        buf = io.BytesIO()
+        im.save(buf, "JPEG", quality=quality)
+        self._cache = (key, buf.getvalue())
+        return self._cache[1]
+
+
 class FakeCamera:
-    """Implements hal.camera.Camera against a SyntheticScene."""
+    """Implements hal.camera.Camera against a SyntheticScene (brackets) and a
+    CabView (live view).
+
+    `pose` returns the simulated head's physical (pan, tilt) relative to its
+    power-up pose, so live view follows the head. Without it the view is fixed.
+    """
 
     def __init__(self, config: CameraConfig, scene: SyntheticScene | None = None,
-                 seed: int = 0, k_true: float = K_TRUE, vignette: np.ndarray | None = None) -> None:
+                 seed: int = 0, k_true: float = K_TRUE, vignette: np.ndarray | None = None,
+                 pose: Callable[[], tuple[float, float]] | None = None,
+                 view: CabView | None = None) -> None:
         self.config = config
         self.scene = scene if scene is not None else demo_scene()
         self.k_true = k_true
         self.vignette = vignette
+        self.pose = pose
+        self.view = view
         self._rng = np.random.default_rng(seed)
         self._connected = False
+        self.previewing = False
 
     def connect(self) -> None:
         self._connected = True
@@ -139,10 +256,23 @@ class FakeCamera:
         mosaic += READ_NOISE_DN * self._rng.standard_normal(mosaic.shape)
         return np.clip(np.rint(mosaic + BLACK), 0, WHITE).astype(np.uint16)
 
+    def preview(self) -> bytes:
+        if not self._connected:
+            raise RuntimeError("not connected")
+        if self.view is None:
+            self.view = CabView()
+        self.previewing = True
+        pan, tilt = self.pose() if self.pose else (0.0, 0.0)
+        return self.view.jpeg(pan, tilt)
+
+    def end_preview(self) -> None:
+        self.previewing = False
+
     def capture_bracket(self, out_dir: str | Path,
                         meta: dict[str, Any] | None = None) -> BracketManifest:
         if not self._connected:
             raise RuntimeError("not connected")
+        self.end_preview()
         cfg = self.config
         out = Path(out_dir)
         out.mkdir(parents=True, exist_ok=True)

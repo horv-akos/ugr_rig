@@ -116,6 +116,11 @@ python -m tools.mountctl --backend sim info
 `time_scale` controls simulated wall-clock: `0.0` runs instantly, `1.0` in real
 time (which is what makes the abort and stop tests meaningful).
 
+`pair(step_gpio, dir_gpio)` adds a signed step count per axis (`net_steps`): the
+simulated head's physical position, which a new zero does not move. The rig server
+uses it to point the simulated live view. `record_edges=False` drops the per-edge
+log, which a long-running sim server would otherwise grow without bound.
+
 ## Measuring the head
 
 `config/mount.toml` ships with placeholders marked `MEASURE`. `tools/mountctl.py`
