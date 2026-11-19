@@ -161,6 +161,9 @@ def evaluate_region(bracket_dir: str | Path, out_dir: str | Path, cfg: AnalysisC
                          f"{100 * (pr['ratio'] - 1):+.1f} % (shutter timing?)")
     if merged.weights_source != "matrix":
         flags.append(f"luminance weights from {merged.weights_source}")
+    if masks.glazing:
+        flags.append("glazing treated as excluded: reflections in it are not counted yet "
+                     "(reflection detection, REQUIREMENTS §3.2, is not built)")
     if any(s.flags for s in sources):
         flags.append("some sources carry flags - see the source table")
 

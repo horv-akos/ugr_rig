@@ -80,6 +80,11 @@ class NewProfile(BaseModel):
     zero_reference: str = Field("", max_length=2000)
 
 
+class EditProfile(BaseModel):
+    vehicle: str | None = Field(None, max_length=200)
+    zero_reference: str | None = Field(None, max_length=2000)
+
+
 class SavePosition(BaseModel):
     name: str = Field(min_length=1, max_length=80)
     wait: bool = False
@@ -233,11 +238,11 @@ def create_app(rig: RigController) -> FastAPI:
 
     @app.post("/api/positions", status_code=201)
     def new_profile(body: NewProfile) -> dict[str, Any]:
-        return rig.create_profile(body.name, body.vehicle, body.zero_reference).as_dict()
+        return rig.describe(rig.create_profile(body.name, body.vehicle, body.zero_reference))
 
     @app.get("/api/positions/{profile}")
     def get_profile(profile: str) -> dict[str, Any]:
-        return rig.get_profile(profile).as_dict()
+        return rig.describe(rig.get_profile(profile))
 
     @app.delete("/api/positions/{profile}")
     def delete_profile(profile: str) -> dict[str, Any]:
@@ -249,20 +254,47 @@ def create_app(rig: RigController) -> FastAPI:
 
     @app.post("/api/positions/{profile}/order")
     def reorder(profile: str, body: Order) -> dict[str, Any]:
-        return rig.reorder_positions(profile, body.names).as_dict()
+        return rig.describe(rig.reorder_positions(profile, body.names))
 
     @app.post("/api/positions/{profile}/gaze")
     def gaze(profile: str) -> dict[str, Any]:
-        return rig.set_forward_gaze(profile).as_dict()
+        return rig.describe(rig.set_forward_gaze(profile))
 
     @app.post("/api/positions/{profile}/run")
     def run(profile: str, body: Run | None = None) -> dict[str, Any]:
         body = body or Run()
         return motion(rig.run_profile(profile, body.dwell_s, body.speed), body.wait)
 
+    @app.patch("/api/positions/{profile}")
+    def edit_profile(profile: str, body: EditProfile) -> dict[str, Any]:
+        return rig.describe(rig.update_profile(profile, body.vehicle, body.zero_reference))
+
+    @app.get("/api/positions/{profile}/{position}/image")
+    def position_image(profile: str, position: str) -> Response:
+        jpeg = rig.position_image(profile, position)
+        if jpeg is None:
+            return JSONResponse(status_code=404, content={
+                "error": "NoImage", "detail": f"{position!r} has no reference image yet"})
+        return Response(jpeg, media_type="image/jpeg", headers={"Cache-Control": "no-cache"})
+
+    @app.post("/api/positions/{profile}/{position}/image")
+    def retake_image(profile: str, position: str) -> dict[str, Any]:
+        """Replace the reference image with live view; the head must be at the position."""
+        return rig.describe(rig.retake_image(profile, position))
+
+    @app.get("/api/positions/{profile}/{position}/masks")
+    def get_masks(profile: str, position: str) -> dict[str, Any]:
+        return rig.position_masks(profile, position)
+
+    @app.put("/api/positions/{profile}/{position}/masks")
+    def put_masks(profile: str, position: str, body: dict[str, Any]) -> dict[str, Any]:
+        """Exclusion, glazing and luminaire polygons, normalised 0..1 from the top left.
+        Validated and versioned on save; the file is what `ugrctl process --masks` reads."""
+        return rig.set_position_masks(profile, position, body)
+
     @app.delete("/api/positions/{profile}/{position}")
     def delete_position(profile: str, position: str) -> dict[str, Any]:
-        return rig.delete_position(profile, position).as_dict()
+        return rig.describe(rig.delete_position(profile, position))
 
     @app.post("/api/positions/{profile}/{position}/goto")
     def goto_position(profile: str, position: str, body: Wait | None = None) -> dict[str, Any]:

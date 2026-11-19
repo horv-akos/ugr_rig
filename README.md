@@ -117,7 +117,7 @@ where to point the laptop's browser. Bound to 127.0.0.1 over SSH it says how to 
 | `storage` + session sequence (`pipeline/study.py`) | Not started |
 | Reflections in detection, forward-gaze combination | Not started |
 | `report`: photo, contribution map, source map, masks, stamp, Excel, PDF | Heatmap built; rest not started |
-| `web`: movement calibration page | **Built**, sim-tested; reference image, tiling and mask editor to come |
+| `web`: movement calibration page, reference images, mask editor | **Built**, sim-tested; tiling, coverage map and aim check to come |
 | `web`: home, camera calibration pages | Not started |
 
 ---

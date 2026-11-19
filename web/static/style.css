@@ -201,6 +201,40 @@ table.positions { width: 100%; border-collapse: collapse; font-size: 14px; }
 .positions td.act button { min-height: 36px; padding: 4px 10px; }
 .positions .empty td { color: var(--muted); padding: 12px 6px; }
 
+.positions .masks-btn small { color: var(--muted); margin-left: 4px; }
+
+/* ---- mask editor ------------------------------------------------------- */
+
+.mask-dialog {
+  width: min(1200px, 96vw); max-height: 94vh; padding: 0;
+  background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: var(--radius);
+}
+.mask-dialog::backdrop { background: rgba(0, 0, 0, .7); }
+.mask-head { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+.mask-head h2 { margin: 0; font-size: 15px; text-transform: none; letter-spacing: 0; color: var(--text); }
+.mask-body { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 12px; padding: 12px; }
+.mask-box { position: relative; width: 100%; aspect-ratio: 3 / 2; background: #000; border-radius: 8px;
+            overflow: hidden; touch-action: none; cursor: crosshair; align-self: start; }
+.mask-box img, .mask-box canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+.mask-box img { object-fit: contain; }
+.mask-box canvas { pointer-events: none; }
+.mask-side { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.seggroup.three { grid-template-columns: repeat(3, 1fr); margin-top: 0; }
+.lum-fields { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
+.lum-fields.off { visibility: hidden; }
+.hint { font-size: 13px; color: var(--muted); margin: 6px 0; }
+.hint.warn { color: var(--warn); }
+.hint.bad { color: var(--bad); }
+.mask-list { list-style: none; margin: 6px 0; padding: 0; max-height: 34vh; overflow: auto; font-size: 14px; }
+.mask-list li { display: flex; align-items: center; gap: 8px; padding: 4px 0; border-bottom: 1px solid #1e242b; }
+.mask-list li button { min-height: 32px; padding: 2px 10px; }
+.mask-list .grow { flex: 1; overflow-wrap: anywhere; }
+.swatch { width: 12px; height: 12px; border-radius: 3px; flex: none; }
+@media (max-width: 800px) {
+  .mask-body { grid-template-columns: minmax(0, 1fr); }
+  .mask-dialog { width: 100vw; max-width: 100vw; max-height: 100vh; border-radius: 0; }
+}
+
 /* ---- messages ---------------------------------------------------------- */
 
 .log { list-style: none; margin: 0; padding: 0; font-size: 13px; max-height: 220px; overflow: auto; }

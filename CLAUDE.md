@@ -54,12 +54,14 @@ report/      heatmap.png renderer. Photo, maps, source boxes, stamp, Excel, PDF 
 pipeline/    region.py: one direction, bracket dir -> result dir. study.py not started
 service/     controller.py: owns the mount and camera, one motion thread at a time, jog
              dead-man watchdog · liveview.py: one grabber thread for all viewers, paused()
-             · positions.py: position profiles as TOML in <data>/profiles/positions/.
+             · positions.py: position profiles as TOML in <data>/profiles/positions/, with
+             each position's reference image and masks beside them.
              Camera, session sequence, job queue not started
 storage/     not started: data directory (profiles/, studies/), SQLite index
 web/         api.py: FastAPI over service/ (/api/...); __main__.py runs it (`python -m web`)
              and prints the reachable URLs (netinfo.py).
-             static/: movement page (plain HTML/CSS/JS ES modules, no build step, no CDN).
+             static/: movement page + mask editor (masks.js); plain HTML/CSS/JS ES modules,
+             no build step, no CDN.
              Home and camera calibration pages not started
 config/      mount.toml · camera.toml · analysis.toml (also the template for camera profiles)
 tools/       mountctl.py (head bench CLI) · ugrctl.py (camera + processing CLI)
@@ -111,7 +113,11 @@ talks to hardware, so it is always testable on a desk against stored brackets.
 - Two UGRs: per position along the camera axis (stamped on that position's images), per study
   along the forward gaze (the headline). Never average UGR values; the scale is logarithmic.
 - Glazing polygons are not exclusions. In `dark` studies sources inside them are reflections and
-  count, against their own lower threshold; in `daylight` studies glazing is excluded.
+  count, against their own lower threshold; in `daylight` studies glazing is excluded. Until
+  reflection detection exists, `exclusion_mask()` excludes glazing and the result flags it.
+- Masks belong to a position (`<data>/profiles/positions/<slug>/<id>.masks.json`), drawn on its
+  reference image `<id>.jpg`; the file is the `--masks` input of `ugrctl process`. Position ids
+  are stable, so re-saving a position keeps its masks. Names may not contain `/` or `\`.
 - Saving a position or setting the zero takes the backlash up along `approach_sign` first
   (`take_up_backlash()`), or replay lands off by the backlash. The mount tracks the last
   direction per axis; `status()["backlash_ok"]` shows it.
@@ -143,7 +149,8 @@ offline: no CDN, no Node build step (so FastAPI's /docs pages are switched off).
 
 Built and sim-tested: mount (incl. jog, nudge, speed, controlled stop, backlash tracking), the
 rig server (`service/` + `web/api.py`) and `rigctl`, live view (simulated cab on the desk), the
-movement calibration page at `/movement`, camera control (fake libgphoto2 only), the whole
+movement calibration page at `/movement` with reference images and the mask editor, glazing
+masks read by detection (excluded and flagged for now), camera control (fake libgphoto2 only), the whole
 processing chain for one position, heatmap, `ugrctl`. Not yet run on the real 2000D, on real
 CR2s, or on the Pi.
 
@@ -152,6 +159,6 @@ feed, motor control service with hold-to-move jog and position profiles, three w
 windscreen reflections, forward-gaze study rating, report images, metrics, Excel.
 
 Next, roughly in order (`REQUIREMENTS.md` §8): camera on the body (`camera info`, one bracket,
-live view); `hal/tmc2209.py`; at the desk meanwhile, the movement page's remaining pieces
-(reference image, mask editor); `storage/` + session sequence + home page; reflections, forward gaze, report images, Excel;
-camera calibration page, PDF. Open items list: `REQUIREMENTS.md` §9.
+live view); `hal/tmc2209.py`; at the desk meanwhile, `storage/` + session sequence + home
+page; reflections, forward gaze (with the tiling and coverage map), report images, Excel; camera
+calibration page, PDF. Open items list: `REQUIREMENTS.md` §9.

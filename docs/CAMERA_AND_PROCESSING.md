@@ -150,19 +150,26 @@ Position index: Guth via Levin's fit at and above the line of sight, Iwata below
 Per source: ω-weighted mean L, ω, centre direction, p, contribution `L²ω/p²`. Flags: clipped
 (lower bound), ω outside 0.0003–0.1 sr, p capped.
 
-Masks file, one per vehicle and direction, coordinates normalised 0..1 from the top left:
+Masks file, one per vehicle and direction, coordinates normalised 0..1 from the top left. The
+mask editor on the movement page writes one per saved position
+(`<data>/profiles/positions/<profile>/<id>.masks.json`, drawn on that position's reference
+image), and the same file is the `--masks` input of `ugrctl process`:
 
 ```json
 {
-  "version": "truck-A-dash-v1",
+  "version": "truck-A/dash@1a2b3c4d",
   "exclude": [[[0.0, 0.0], [0.45, 0.0], [0.45, 0.30], [0.0, 0.30]]],
+  "glazing": [[[0.0, 0.0], [1.0, 0.0], [1.0, 0.28], [0.0, 0.32]]],
   "include": [{"name": "dome", "type": "white_led",
                "polygon": [[0.62, 0.10], [0.74, 0.10], [0.74, 0.26], [0.62, 0.26]],
                "threshold_cd_m2": 500}]
 }
 ```
 
-`type` selects a spectral factor from `[calibration.spectral_factors]`.
+`type` selects a spectral factor from `[calibration.spectral_factors]`. `glazing` marks the
+windscreen and side glass: in a dark study reflections of the cab's lights in it are to be
+detected as sources (REQUIREMENTS §3.1). That is not built yet, so for now glazing is excluded
+like `exclude`, still counts toward L_b, and every result with glazing carries a flag saying so.
 
 ### 2.6 Background (`analysis/background.py`)
 

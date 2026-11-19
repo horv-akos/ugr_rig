@@ -5,6 +5,7 @@
 // Status is polled at 4 Hz, which doubles as the connection check.
 
 import { api, deg, el, remember, seg } from "./api.js";
+import { drawMasks, openMaskEditor, wireMaskEditor } from "./masks.js";
 
 const $ = (id) => document.getElementById(id);
 const D2R = Math.PI / 180;
@@ -288,6 +289,9 @@ function drawOverlay() {
   if (!st) return;
 
   const r = imageRect(box);
+  // At a saved position its masks line up with the picture: they were drawn on it.
+  const masks = $("opt-outlines").checked ? hereMasks() : null;
+  if (masks) drawMasks(g, r, masks, { fill: 0.12 });
   const tx = Math.tan(geom.fov_deg[0] * D2R / 2), ty = Math.tan(geom.fov_deg[1] * D2R / 2);
   const project = (c) => [r.x + (c[0] / c[2] / tx + 1) / 2 * r.w, r.y + (1 - c[1] / c[2] / ty) / 2 * r.h];
   const Rc = rotation(st.pan_deg, st.tilt_deg);
@@ -388,6 +392,7 @@ async function loadProfile() {
 
 function renderProfile() {
   $("delete-profile").disabled = !profile;
+  $("edit-profile").disabled = !profile;
   const info = $("profile-info");
   if (!profile) {
     info.replaceChildren();
@@ -410,6 +415,8 @@ function renderProfile() {
     el("td", { class: "num" }, deg(p.tilt_deg)),
     el("td", { class: "act" },
       el("button", { class: "go", title: "Go to this position", onclick: () => gotoPosition(p.name) }, "Go"),
+      el("button", { class: "masks-btn", title: maskTitle(p), onclick: () => openMasks(p) },
+        "Masks", el("small", {}, maskBadge(p))),
       el("button", { class: "quiet", title: "Earlier", disabled: i === 0, onclick: () => move(i, -1) }, "↑"),
       el("button", { class: "quiet", title: "Later", disabled: i === profile.positions.length - 1,
         onclick: () => move(i, 1) }, "↓"),
@@ -419,6 +426,46 @@ function renderProfile() {
     el("td", { colspan: 5 }, "No positions yet: aim, name it below, save."))]));
   $("save-form").elements.name.placeholder = `Name for the current view (e.g. pos ${profile.positions.length + 1})`;
   if (st) render();
+}
+
+function maskTotal(p) {
+  return p.masks ? p.masks.exclude + p.masks.glazing + p.masks.include : 0;
+}
+
+function maskBadge(p) {
+  if (!p.has_image) return "no image";
+  return maskTotal(p) ? String(maskTotal(p)) : "";
+}
+
+function maskTitle(p) {
+  const m = p.masks || {};
+  return `${p.has_image ? "Reference image saved" : "No reference image yet"}; `
+    + `${m.exclude || 0} exclusion, ${m.glazing || 0} glazing, ${m.include || 0} luminaire shape(s)`;
+}
+
+function isHere(p) {
+  return !!st && st.zeroed && Math.abs(p.pan_deg - st.pan_deg) < HERE_DEG
+    && Math.abs(p.tilt_deg - st.tilt_deg) < HERE_DEG;
+}
+
+function openMasks(p) {
+  openMaskEditor({ profile: profile.name, position: p, here: isHere(p), say, onSaved: loadProfile });
+}
+
+// Masks of the position the head is at, cached by version, drawn over live view.
+const maskCache = new Map();   // position id -> {version, doc}
+
+function hereMasks() {
+  if (!profile || !st || !st.zeroed) return null;
+  const p = profile.positions.find(isHere);
+  if (!p || !maskTotal(p)) return null;
+  const hit = maskCache.get(p.id);
+  if (hit && hit.version === p.masks.version) return hit.doc;   // current, or on its way
+  maskCache.set(p.id, { version: p.masks.version, doc: null });
+  api("GET", `/api/positions/${seg(profile.name)}/${seg(p.name)}/masks`)
+    .then((doc) => { maskCache.set(p.id, { version: doc.version, doc }); drawOverlay(); })
+    .catch(() => maskCache.delete(p.id));
+  return null;
 }
 
 function markHere() {
@@ -500,20 +547,36 @@ function wire() {
   });
 
   $("profile").addEventListener("change", loadProfile);
-  $("new-profile").addEventListener("click", () => {
-    $("profile-form").hidden = false;
-    $("profile-form").elements.name.focus();
-  });
-  $("cancel-profile").addEventListener("click", () => { $("profile-form").hidden = true; });
-  $("profile-form").addEventListener("submit", async (e) => {
+  const form = $("profile-form");
+  const openForm = (editing) => {
+    form.reset();
+    form.dataset.mode = editing ? "edit" : "create";
+    form.elements.name.disabled = editing;   // renaming would orphan results that name it
+    $("profile-submit").textContent = editing ? "Save details" : "Create";
+    if (editing) {
+      form.elements.name.value = profile.name;
+      form.elements.vehicle.value = profile.vehicle;
+      form.elements.zero_reference.value = profile.zero_reference;
+    }
+    form.hidden = false;
+    (editing ? form.elements.vehicle : form.elements.name).focus();
+  };
+  $("new-profile").addEventListener("click", () => openForm(false));
+  $("edit-profile").addEventListener("click", () => { if (profile) openForm(true); });
+  $("cancel-profile").addEventListener("click", () => { form.hidden = true; });
+  form.addEventListener("submit", async (e) => {
     e.preventDefault();
-    const f = e.target.elements;
-    const r = await act(() => api("POST", "/api/positions", {
-      name: f.name.value, vehicle: f.vehicle.value, zero_reference: f.zero_reference.value,
-    }), `created profile “${f.name.value}”`);
+    const f = form.elements;
+    const r = form.dataset.mode === "edit"
+      ? await act(() => api("PATCH", P(), {
+        vehicle: f.vehicle.value, zero_reference: f.zero_reference.value,
+      }), `updated “${profile.name}”`)
+      : await act(() => api("POST", "/api/positions", {
+        name: f.name.value, vehicle: f.vehicle.value, zero_reference: f.zero_reference.value,
+      }), `created profile “${f.name.value}”`);
     if (r) {
-      e.target.reset();
-      e.target.hidden = true;
+      form.reset();
+      form.hidden = true;
       await loadProfiles(r.name);
     }
   });
@@ -543,6 +606,8 @@ function wire() {
   const keyDir = { ArrowUp: "up", ArrowDown: "down", ArrowLeft: "left", ArrowRight: "right" };
   const typing = (t) => t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement || t instanceof HTMLSelectElement;
   document.addEventListener("keydown", (e) => {
+    // The mask editor has its own keys; the head must not move while it is open.
+    if ($("mask-dialog").open) return;
     if (typing(e.target) || e.ctrlKey || e.metaKey || e.altKey) return;
     if (keyDir[e.key]) {
       e.preventDefault();
@@ -559,6 +624,7 @@ function wire() {
   document.addEventListener("visibilitychange", () => { if (document.hidden) jogEnd(); });
 
   new ResizeObserver(drawOverlay).observe($("live-box"));
+  wireMaskEditor();
 }
 
 async function main() {

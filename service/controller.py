@@ -32,7 +32,8 @@ from hal.config import MountConfig, load_config
 from hal.mount import MountError, MoveResult, NotZeroed, PanTiltMount
 
 from .liveview import LiveView
-from .positions import Position, PositionProfile, ProfileStore, check_name, now_iso
+from .positions import (Position, PositionProfile, ProfileStore, check_name, mask_counts,
+                        now_iso)
 
 log = logging.getLogger(__name__)
 
@@ -46,6 +47,7 @@ DIRECTIONS: dict[str, tuple[str, int]] = {
 }
 HEARTBEAT_TIMEOUT_S = 0.3   # jog ramps down when the client has not pinged for this long
 WATCHDOG_PERIOD_S = 0.05
+HERE_DEG = 0.05            # the head counts as at a saved position within this
 
 DEFAULT_DATA_DIR = Path(__file__).resolve().parents[1] / "data"
 
@@ -318,10 +320,27 @@ class RigController:
         with self._profiles_lock:
             return self.profiles.load(name)
 
+    def describe(self, p: PositionProfile) -> dict[str, Any]:
+        """The profile as the API returns it: the TOML content plus, per position, whether
+        it has a reference image and how many masks."""
+        d = p.as_dict()
+        with self._profiles_lock:
+            for pos, out in zip(p.positions, d["positions"]):
+                out["has_image"] = self.profiles.image_path(p.name, pos).is_file()
+                out["masks"] = mask_counts(self.profiles.load_masks(p.name, pos))
+        return d
+
     def create_profile(self, name: str, vehicle: str = "",
                        zero_reference: str = "") -> PositionProfile:
         with self._profiles_lock:
             return self.profiles.create(name, vehicle, zero_reference)
+
+    def update_profile(self, name: str, vehicle: str | None = None,
+                       zero_reference: str | None = None) -> PositionProfile:
+        with self._profiles_lock:
+            p = self.profiles.load(name).with_details(vehicle, zero_reference)
+            self.profiles.save(p)
+            return p
 
     def delete_profile(self, name: str) -> str:
         with self._profiles_lock:
@@ -345,19 +364,70 @@ class RigController:
                 self._require_lash("save a position")
                 pan, tilt = self.mount.position()
                 pos = Position(name, round(pan, 4), round(tilt, 4), now_iso())
+                # The reference image is what this position looks like, taken now that the
+                # backlash is on the replay side: the mask editor draws on it.
+                jpeg = self.live.snapshot(timeout=3.0)
                 with self._profiles_lock:
                     p = self.profiles.load(profile).with_position(pos)
                     self.profiles.save(p)
-                return {"position": pos.as_dict(), "backlash_taken_up": moved,
-                        "profile_hash": p.content_hash}
+                    saved = p.position(name)
+                    if jpeg:
+                        self.profiles.save_image(p.name, saved, jpeg)
+                return {"position": saved.as_dict(), "backlash_taken_up": moved,
+                        "reference_image": bool(jpeg), "profile_hash": p.content_hash}
 
             return self._start("save", {"profile": profile, "position": name}, run)
 
     def delete_position(self, profile: str, name: str) -> PositionProfile:
+        """Remove a position; its image and masks go to the trash with it."""
         with self._profiles_lock:
-            p = self.profiles.load(profile).without_position(name)
+            p0 = self.profiles.load(profile)
+            pos = p0.position(name)
+            p = p0.without_position(name)
             self.profiles.save(p)
+            self.profiles.trash_position_files(p.name, pos)
             return p
+
+    # -- reference images and masks ------------------------------------------ #
+
+    def position_image(self, profile: str, name: str) -> bytes | None:
+        with self._profiles_lock:
+            p = self.profiles.load(profile)
+            path = self.profiles.image_path(p.name, p.position(name))
+            return path.read_bytes() if path.is_file() else None
+
+    def retake_image(self, profile: str, name: str) -> PositionProfile:
+        """Replace a position's reference image with live view now. The head must be at the
+        position, or the image would not match the angles the masks are drawn for."""
+        p = self.get_profile(profile)
+        pos = p.position(name)
+        with self._lock:
+            self._require_idle()
+            self._require_zero()
+            pan, tilt = self.mount.position()
+        if abs(pan - pos.pan_deg) > HERE_DEG or abs(tilt - pos.tilt_deg) > HERE_DEG:
+            raise RigError(f"go to {name!r} first: the head is at {pan:+.3f}, {tilt:+.3f}, "
+                           f"the position at {pos.pan_deg:+.3f}, {pos.tilt_deg:+.3f}")
+        jpeg = self.live.snapshot(timeout=3.0)
+        if not jpeg:
+            raise RigError("no live-view frame: "
+                           + (self.live.status()["error"] or f"camera {self.live.source}"))
+        with self._profiles_lock:
+            self.profiles.save_image(p.name, pos, jpeg)
+        return p
+
+    def position_masks(self, profile: str, name: str) -> dict[str, Any]:
+        with self._profiles_lock:
+            p = self.profiles.load(profile)
+            pos = p.position(name)
+            return (self.profiles.load_masks(p.name, pos)
+                    or {"version": None, "exclude": [], "glazing": [], "include": []})
+
+    def set_position_masks(self, profile: str, name: str,
+                           masks: dict[str, Any]) -> dict[str, Any]:
+        with self._profiles_lock:
+            p = self.profiles.load(profile)
+            return self.profiles.save_masks(p.name, p.position(name), masks)
 
     def reorder_positions(self, profile: str, names: list[str]) -> PositionProfile:
         with self._profiles_lock:

@@ -85,6 +85,10 @@ Glazing pixels that are not sources count toward the background in both conditio
 known light outside the vehicle. The lighting condition is set per study and recorded with every
 result.
 
+Built so far (2026-11-19): glazing polygons are drawn per position in the mask editor and read by
+detection, which treats them as excluded (the `daylight` rule) until reflection detection exists.
+Every result with glazing carries a flag saying reflections in it are not counted yet.
+
 ### 3.2 Detection
 
 Absolute luminance threshold, default **500 cd/m²**, configurable per position profile and
@@ -391,8 +395,13 @@ Three pages, decided 2026-11-19.
 - Downloads: a results zip (images, Excel, CSV, JSON) and a raw zip (CR2s), separately. The raw
   set is ~200 MB per position. Disk space indicator
 
-**Movement calibration** (`/movement`, built 2026-11-19 except the reference image, the tiling
-proposal and coverage map, profile copy/edit, and the mask editor)
+**Movement calibration** (`/movement`, built 2026-11-19 except the tiling proposal, the coverage
+map and profile copy; the aim check on replay is not built either)
+
+Saving a position also stores a live-view frame as its reference image. The mask editor draws
+on that image: tap the corners, tap the first one (or Finish) to close, choose Exclude, Glazing,
+or Luminaire with a name and source type. Masks are validated, versioned
+(`<profile>/<position>@<hash>`) and drawn over live view whenever the head is at that position.
 
 On a portrait phone the live view is pinned to the top of the screen, so it stays in sight
 while the arrows are pressed.
@@ -494,8 +503,9 @@ CameraProfile    name, body_serial, lens, focal_mm, distortion_k1, vignette_map_
 Vehicle          id, name, configuration, notes
 PositionProfile  name, vehicle_id, zero_reference, forward_gaze (pan_deg, tilt_deg),
                  threshold_cd_m2, reflection_threshold_cd_m2, content_hash
-Position         profile, order, name, pan_deg, tilt_deg, reference_image_ref,
-                 masks (exclude, glazing, include ROIs: name, type, polygon, reflects)
+Position         profile, order, id, name, pan_deg, tilt_deg, saved_at; files <id>.jpg
+                 (reference image) and <id>.masks.json (exclude, glazing, include ROIs:
+                 name, type, polygon, threshold; reflects planned)
 Study            id, vehicle_id, position_profile, camera_profile, lighting_condition,
                  started_at, operator, notes, k_stored, k_measured, k_drift_flag, L_b, E_ind,
                  zero_ref, zero_drift_deg, check_delta_ugr, ugr_forward, coverage,
@@ -510,8 +520,10 @@ CalibrationRec   camera_profile, k, target, meter_reading, measured_at
 
 A study is one recording session; the UI calls it a study. Everything lives under one data
 directory on the Pi. Profiles are TOML files under `profiles/camera/` and `profiles/positions/`
-(position masks as JSON beside them, reference images as JPEG), so the web UI can edit them and a
-result can carry their hash. Studies are directories under `studies/` holding the brackets and
+(each position's reference image and masks in a folder beside its profile, named by the
+position's id, so a rename cannot orphan them), so the web UI can edit them and a result can
+carry their hash. Profile and position names may not contain `/` or `\`: they are URL path
+segments. Studies are directories under `studies/` holding the brackets and
 results. SQLite indexes both for the library and search; the files remain the record, so the index
 can always be rebuilt from them.
 
@@ -541,7 +553,8 @@ ugr_rig/
 │   └── masks.py          per-pixel direction + solid angle, Guth/Iwata p     (built)
 ├── analysis/
 │   ├── detection.py      ROI + absolute-threshold source extraction          (built)
-│   │                     glazing regions, reflections                        (planned)
+│   │                     glazing read, excluded and flagged for now          (built)
+│   │                     reflections in glazing                              (planned)
 │   ├── background.py     frame mean (provisional) + hemisphere sweep → L_b   (built)
 │   ├── ugr.py            CIE 117 formula, perception scale                   (built)
 │   └── forward.py        all positions: de-duplication, coverage, forward-gaze UGR (planned)
@@ -586,7 +599,8 @@ sim-tested.
 3. At the desk, alongside 1–2, against the simulators: continuous jog in `hal/mount.py`,
    `service/` with its API, `rigctl`, preview frames in `hal/camera*.py` (built 2026-11-19)
 4. `web` movement calibration page: needed in the cab to record positions, and handy for measuring
-   the head (built 2026-11-19; reference image, tiling and mask editor still to come)
+   the head (built 2026-11-19, incl. reference images and the mask editor; tiling, coverage
+   map and the aim check still to come)
 5. `storage` + the session sequence (`pipeline/study.py`), optical zeroing and the drift check;
    home page
 6. Reflections in detection, the forward-gaze combination, report images and the Excel workbook
@@ -597,6 +611,9 @@ sim-tested.
 
 ## 9. Open items
 
+- Masks are drawn on the live-view reference image and applied to the bracket frames, so live
+  view must show the same field as the CR2. Confirm on the body that Canon live view is not
+  cropped or offset relative to the raw frame; if it is, store the offset in the camera profile
 - Reflections (§3.1, §3.2): the default reflection threshold and the double-image merge radius,
   both set from the first `dark` session in a cab
 - Lights outside the vehicle seen through the glass at night: exclusion polygons, or a lights-off

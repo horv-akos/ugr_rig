@@ -89,6 +89,7 @@
     <div class="row">
       <select id="profile" aria-label="Position profile"></select>
       <button id="new-profile">New</button>
+      <button id="edit-profile">Edit</button>
       <button id="delete-profile" class="quiet">Delete</button>
     </div>
     <form id="profile-form" class="profile-form" hidden>
@@ -96,7 +97,7 @@
       <label>Vehicle / configuration<input name="vehicle" maxlength="200" autocomplete="off"></label>
       <label>Zero reference<textarea name="zero_reference" rows="2" maxlength="2000"
         placeholder="Where the fiducial sits in this cab, how the rig is placed at the eye point"></textarea></label>
-      <div class="row"><button type="submit" class="primary">Create</button>
+      <div class="row"><button type="submit" class="primary" id="profile-submit">Create</button>
         <button type="button" id="cancel-profile" class="quiet">Cancel</button></div>
     </form>
     <dl id="profile-info" class="info"></dl>
@@ -119,5 +120,49 @@
     <ol id="log" class="log" aria-live="polite"></ol>
   </section>
 </main>
+
+<dialog id="mask-dialog" class="mask-dialog" aria-labelledby="mask-title">
+  <header class="mask-head">
+    <h2 id="mask-title">Masks</h2>
+    <button id="mask-close" class="quiet">Close</button>
+  </header>
+  <div class="mask-body">
+    <div class="mask-box" id="mask-box" tabindex="0" aria-label="Reference image: tap to place corners">
+      <img id="mask-img" alt="Reference image of this position">
+      <canvas id="mask-cv" aria-hidden="true"></canvas>
+      <div id="mask-msg" class="live-msg"></div>
+    </div>
+    <aside class="mask-side">
+      <div id="mask-kinds" class="seggroup three" role="group" aria-label="Shape kind">
+        <button data-kind="exclude" title="Never a glare source">Exclude</button>
+        <button data-kind="glazing" title="Windscreen and side glass">Glazing</button>
+        <button data-kind="include" title="A known light: its pixels are one source">Luminaire</button>
+      </div>
+      <div id="lum-fields" class="lum-fields off">
+        <input id="lum-name" placeholder="Name, e.g. dome" maxlength="60" autocomplete="off">
+        <select id="lum-type" aria-label="Source type (selects the spectral factor)">
+          <option value="white_led">white LED</option>
+          <option value="amber">amber</option>
+          <option value="red">red</option>
+          <option value="display">display</option>
+          <option value="other">other</option>
+        </select>
+      </div>
+      <p class="hint">Tap the corners on the image. Tap the first corner, or Finish, to close the
+        shape. <kbd>Enter</kbd> finishes, <kbd>Backspace</kbd> undoes a corner.</p>
+      <div class="row">
+        <button id="mask-undo">Undo corner</button>
+        <button id="mask-finish">Finish shape</button>
+        <button id="mask-cancel" class="quiet">Drop shape</button>
+      </div>
+      <ol id="mask-list" class="mask-list"></ol>
+      <div class="row">
+        <button id="mask-save" class="primary">Save masks</button>
+        <button id="mask-retake" class="quiet">Retake image from live view</button>
+      </div>
+      <p id="mask-status" class="hint"></p>
+    </aside>
+  </div>
+</dialog>
 </body>
 </html>

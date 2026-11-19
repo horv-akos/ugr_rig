@@ -1,7 +1,10 @@
 """Glare source extraction from a calibrated luminance map.
 
 Order of precedence, per REQUIREMENTS §3.2:
-  1. Exclusion masks (windows) - never a source.
+  1. Exclusion masks - never a source. Glazing polygons are excluded too for
+     now: in `dark` studies they are where reflections of the cab's lights are
+     to be detected (REQUIREMENTS §3.1), which is not built yet, so for the
+     time being glazing behaves as in a `daylight` study and the result says so.
   2. Inclusion ROIs - each known luminaire is drawn once per vehicle and
      direction. Pixels inside it at or above the threshold form ONE named
      source, however many blobs they break into. The ROI area is then closed
@@ -45,6 +48,7 @@ class RegionMasks:
     exclude: list[list[tuple[float, float]]] = field(default_factory=list)
     include: list[InclusionROI] = field(default_factory=list)
     version: str = ""
+    glazing: list[list[tuple[float, float]]] = field(default_factory=list)
 
     @classmethod
     def load(cls, path: str | Path | None) -> "RegionMasks":
@@ -53,6 +57,7 @@ class RegionMasks:
         raw = json.loads(Path(path).read_text())
         return cls(
             exclude=[[tuple(p) for p in poly] for poly in raw.get("exclude", [])],
+            glazing=[[tuple(p) for p in poly] for poly in raw.get("glazing", [])],
             include=[InclusionROI(name=r["name"], polygon=[tuple(p) for p in r["polygon"]],
                                   source_type=r.get("type"),
                                   threshold_cd_m2=r.get("threshold_cd_m2"))
@@ -74,8 +79,10 @@ def rasterise(polygon: list[tuple[float, float]], shape: tuple[int, int]) -> np.
 
 
 def exclusion_mask(masks: RegionMasks, shape: tuple[int, int]) -> np.ndarray:
+    """Pixels that can never be a source: exclusion polygons, and glazing until reflection
+    detection exists. Both still count toward L_b with `windows_in_background`."""
     m = np.zeros(shape, bool)
-    for poly in masks.exclude:
+    for poly in masks.exclude + masks.glazing:
         m |= rasterise(poly, shape)
     return m
 
@@ -187,6 +194,7 @@ def detect_sources(L: np.ndarray, clipped: np.ndarray, geom: CameraGeometry,
 
     info = {"threshold_cd_m2": threshold, "min_pixels": min_pixels,
             "merge_radius_px": merge_radius_px, "dropped_small_blobs": dropped,
-            "excluded_px": int(exclude.sum()), "n_roi": len(masks.include),
+            "excluded_px": int(exclude.sum()), "n_glazing": len(masks.glazing),
+            "n_roi": len(masks.include),
             "masks_version": masks.version}
     return sources, labels, info

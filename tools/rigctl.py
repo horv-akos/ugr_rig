@@ -218,8 +218,11 @@ def cmd_pos_save(c: Client, args) -> int:
     m = out["motion"]
     pos = (m.get("result") or {}).get("position")
     if pos:
-        lash = " (backlash taken up first)" if m["result"]["backlash_taken_up"] else ""
-        print(f"saved {pos['name']}: pan {pos['pan_deg']:+.3f}, tilt {pos['tilt_deg']:+.3f}{lash}")
+        notes = [n for n, on in (("backlash taken up first", m["result"]["backlash_taken_up"]),
+                                 ("reference image saved", m["result"].get("reference_image")))
+                 if on]
+        print(f"saved {pos['name']}: pan {pos['pan_deg']:+.3f}, tilt {pos['tilt_deg']:+.3f}"
+              + (f" ({'; '.join(notes)})" if notes else ""))
     else:
         print(motion_line(m))
     return 0
