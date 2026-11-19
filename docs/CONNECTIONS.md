@@ -61,8 +61,8 @@ flowchart TB
   subgraph CAMP["Camera power"]
     direction TB
     PD["12 V → USB-C PD module"]
-    DUMMY["NP-FW50 dummy battery<br/>USB-C PD"]
-    A7["Sony a7"]
+    DUMMY["LP-E10 dummy battery<br/>USB-C PD"]
+    A7["Canon EOS 2000D"]
   end
 
   subgraph PIP["Raspberry Pi 4"]

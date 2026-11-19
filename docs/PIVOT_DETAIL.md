@@ -14,7 +14,7 @@ Costs and part numbers: `SHOPPING_LIST.md` and `SOURCING.md` (purchasing docs, k
 | Item | Qty | Note |
 |---|---|---|
 | Raspberry Pi 4 | 1 | pigpio does not support Pi 5 — see §4.1 |
-| NEMA 17, **QSH4218-35-10-027**, 35 mm body, 1.8° | 2 | The upstream CAD is dimensioned for a 23 mm body, which approved distributors don't stock. Check the printed motor mounts for clearance, edit the mount if it fouls |
+| NEMA 17, **QSH4218-35-10-027**, 35 mm body, 1.8° | 2 | The upstream CAD is dimensioned for a 23 mm body, which approved distributors don't stock. The 35 mm body was checked on the printed mounts and clears (§8.8) |
 | TMC2209 SilentStepStick | 2 | Step/dir for motion, UART for configuration (§4.4) |
 | 100 µF electrolytic, ≥25 V | 2 | Across VMOT and GND, at the driver pins |
 | Perfboard | 1 | No PCB fabrication — §2 |
@@ -247,8 +247,13 @@ Optical zeroing lives in `pipeline/`, not here — it needs both the mount and t
 herringbone gears, so **64:21 is the ratio for a build from these STLs**; the active constant is
 legacy from the standalone belt-driven mount (thing:4316563). The README's quoted 0.0369° agrees.
 
-Inference from the BOM, not a measurement. Verify with the angle gauge — the wrong constant
-scales every tilt angle by 2.52×.
+**Confirmed with the angle gauge (§8.1).** The wrong constant would scale every tilt angle by
+2.52×, so this is the value to keep if upstream firmware is ever consulted again.
+
+Each axis in `config/mount.toml` takes its ratio either as the two tooth counts
+(`gear_teeth_driver`, `gear_teeth_driven`) or as a plain `gear_ratio` (motor turns per output
+turn), never both. `mountctl ratio` prints the measured value as a ready-to-paste `gear_ratio`
+line.
 
 ---
 
@@ -258,7 +263,7 @@ Numbered for reference; do them in the order listed. `tools/mountctl.py` covers 
 
 - **8.5 Soft limits** — drive each axis to mechanical interference by hand, back off, record. Before
    the first automated move. (`mountctl limits`)
-- **8.1 Tilt gear ratio** against the digital angle gauge. (`mountctl ratio`)
+- **8.1 Tilt gear ratio** against the digital angle gauge. (`mountctl ratio`) **Done: 64:21 confirmed.**
 - **8.3 Backlash margin** — approach one target from both directions. (`mountctl backlash`)
 - **8.4 Angular repeatability** — zero → move → return → re-measure, 10×, log the spread.
    (`mountctl repeat`)
@@ -268,4 +273,4 @@ Numbered for reference; do them in the order listed. `tools/mountctl.py` covers 
    low enough to keep the driver cool during holds. Check the tilt axis does not creep during a
    full bracket at the chosen hold current.
 - **8.7 Payload** — tested to just over 1 kg, a7 body is 474 g, so ~500 g of lens.
-- **8.8 Motor mount clearance** for the 35 mm motor body, before assembly.
+- **8.8 Motor mount clearance** for the 35 mm motor body, before assembly. **Done: clears.**

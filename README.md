@@ -116,10 +116,5 @@ it are not counted.
 
 1. **Camera on the bench** — `ugrctl camera info` and one bracket on the real 2000D: which config
    names it exposes, which are writable, and whether the EXIF check passes.
-2. **Tilt gear ratio** — 64:21 per the CAD, to be confirmed with the angle gauge before any
-   commanded angle is trusted.
-3. **Lab access to a calibrated luminance meter** — decides ~€550–1100 of the calibration budget.
-4. **Motor mount clearance** — the 35 mm motor body is longer than the 23 mm the CAD assumes.
-5. **Camera power** — the wiring and BOM still show the a7's NP-FW50 dummy battery. The 2000D
-   needs an LP-E10 dummy fed from CH1, and an approved source for it.
-6. **Lens constants** — focal length, distortion and vignetting of the 18–55 at 18 mm, f/8.
+2. **Lab access to a calibrated luminance meter** — decides ~€550–1100 of the calibration budget.
+3. **Lens constants** — focal length, distortion and vignetting of the 18–55 at 18 mm, f/8.

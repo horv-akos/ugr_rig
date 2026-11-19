@@ -83,8 +83,7 @@ def cmd_info(args) -> int:
     for axis in (cfg.pan, cfg.tilt):
         print(
             f"\n{axis.name}\n"
-            f"  gearing      {axis.gear_teeth_driven}:{axis.gear_teeth_driver}"
-            f" = {axis.gear_ratio:.4f}\n"
+            f"  gearing      {axis.gear_label} = {axis.gear_ratio:.4f}\n"
             f"  resolution   {axis.steps_per_deg:.3f} steps/deg"
             f"  ({axis.deg_per_step*1000:.2f} mdeg/step)\n"
             f"  soft limits  {axis.min_deg:+.1f} .. {axis.max_deg:+.1f} deg\n"
@@ -185,6 +184,11 @@ def cmd_ratio(args) -> int:
     for teeth, label in ((64 / 21, "64:21 herringbone"), (123 / 16, "123:16 belt")):
         if abs(true_ratio - teeth) / teeth < 0.05:
             print(f"within 5% of {label} ({teeth:.5f})")
+    print(
+        f"\nto use the measured value, in [axis.{axis.name}] of {cfg.source}:\n"
+        f"  gear_ratio = {true_ratio:.6f}\n"
+        f"and comment out gear_teeth_driver / gear_teeth_driven"
+    )
     return 0
 
 

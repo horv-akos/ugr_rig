@@ -95,7 +95,7 @@ runs the procedures from `docs/PIVOT_DETAIL.md` §8 and writes CSVs to
 
 ```
 mountctl limits                        # §8.5 — do this first, drivers stay off
-mountctl ratio --axis tilt --deg 30    # §8.1 — 64:21 vs 123:16 is a 2.52x error
+mountctl ratio --axis tilt --deg 30    # §8.1 — prints a gear_ratio line for mount.toml
 mountctl backlash --axis pan --swing 5 # §8.3 — compensation off during the test
 mountctl repeat --pan 30 --tilt 15 -n 10  # §8.4
 ```

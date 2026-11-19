@@ -50,8 +50,8 @@ exposures. Full head spec in `docs/PIVOT_DETAIL.md`.
   a target angle from the same direction.
 - **Vibration.** Axis motion excites the arm. Capture must not begin until the head has settled;
   settle time is measured on the built head, not assumed.
-- **Tilt gear ratio.** 64:21 per the CAD, but verify against the angle gauge before trusting any
-  commanded angle — the alternative constant scales every tilt angle by 2.52×.
+- **Tilt gear ratio.** 64:21, confirmed against the angle gauge. The upstream 123:16 belt constant
+  would scale every tilt angle by 2.52×, so don't copy constants from upstream firmware.
 
 ---
 
@@ -337,22 +337,18 @@ Status per step: `README.md`.
 - Lens constants for the EF-S 18–55 at 18 mm: effective focal length, radial distortion k1,
   vignetting map at f/8 — all `MEASURE` in `config/analysis.toml`
 - Raw clip level of the 2000D at ISO 100 (`saturation_fraction`, currently a conservative 0.92)
-- Tilt gear ratio to be confirmed by measurement (§2)
 - Vibration and settle time — needs measuring on the actual head
 - Whether the illuminance sensor is added for L_b cross-check
 - Spectral correction factor table — which source types matter in practice
 - 2000D over gphoto2: libgphoto2 2.5.34 lists it with capture, config, trigger and preview. Still
   to confirm on the body: config names, that `capturetarget`, `iso`, `aperture` are writable, and
   how `focusmode` reports the lens switch
-- Camera power: the 2000D takes an LP-E10. The NP-FW50 dummy battery in the wiring and BOM was
-  for the a7 — needs an LP-E10 dummy (DR-E10 style) fed from CH1
 - Line of sight: each region is rated as if the observer looks along the camera axis
   (`line_of_sight = "camera"`). A fixed forward gaze is supported but not the default
 - Small sources (ω < 0.0003 sr, e.g. single indicator LEDs) are outside CIE 117 and flagged; CIE
   146/147 small-source correction needs the distance to the source, which the camera does not have
 - Fiducial target design and where it is mounted in a cab (§5.1 zeroing)
-- Motor mount clearance for the 35 mm motor body (CAD assumes 23 mm)
 - Hold current: how low it can go before the tilt axis creeps during a bracket
-- Approved-supplier source for the USB-PD module and dummy battery (currently Amazon)
+- Approved-supplier source for the USB-PD module (currently Amazon)
 - Pi 4 processing time per direction: ~8 s on a desktop at full resolution, so an estimated
   30–45 s on the Pi 4 — measure against the 60 s target
