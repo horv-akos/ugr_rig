@@ -88,12 +88,18 @@ pages) as clients:
 
 ```
 python -m web                          # simulated head on http://127.0.0.1:8000
+python -m web --host 0.0.0.0           # on the Pi: reachable from the laptop
 python -m tools.rigctl mount enable
 python -m tools.rigctl mount zero
 python -m tools.rigctl mount left 2    # right / up / down; goto PAN TILT; speed 0.5
 python -m tools.rigctl mount jog       # interactive, arrow keys
 python -m tools.rigctl positions new truck-a && python -m tools.rigctl positions save truck-a dash
 ```
+
+Once it is listening, the server prints the URLs it can be opened on: with `--host 0.0.0.0`
+one per network interface, the address of your SSH session first, so a headless Pi tells you
+where to point the laptop's browser. Bound to 127.0.0.1 over SSH it says how to restart it.
+`-v` adds one line per HTTP request.
 
 ---
 

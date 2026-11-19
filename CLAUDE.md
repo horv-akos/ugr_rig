@@ -31,6 +31,7 @@ python -m tools.ugrctl --camera sim selftest    # synthetic cab end to end
 python -m tools.mountctl --backend sim selftest # mount logic against the pulse simulator
 python -m tools.rigctl selftest                 # rig server + API + client, private sim server, ~8 s
 python -m web                                   # rig server, simulated head, 127.0.0.1:8000
+python -m web --host 0.0.0.0                    # same, reachable from the LAN; prints its URLs
 python -m tools.ugrctl simulate /tmp/demo && python -m tools.ugrctl process /tmp/demo --masks /tmp/demo/demo_masks.json --k 0.0064
 ```
 
@@ -55,7 +56,8 @@ service/     controller.py: owns the mount, one motion thread at a time, jog dea
              · positions.py: position profiles as TOML in <data>/profiles/positions/.
              Camera, session sequence, job queue not started
 storage/     not started: data directory (profiles/, studies/), SQLite index
-web/         api.py: FastAPI over service/ (/api/...); __main__.py runs it (`python -m web`).
+web/         api.py: FastAPI over service/ (/api/...); __main__.py runs it (`python -m web`)
+             and prints the reachable URLs (netinfo.py).
              Pages (home / movement / camera calibration) not started
 config/      mount.toml · camera.toml · analysis.toml (also the template for camera profiles)
 tools/       mountctl.py (head bench CLI) · ugrctl.py (camera + processing CLI)

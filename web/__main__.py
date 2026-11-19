@@ -4,6 +4,10 @@
     python -m web --time-scale 1                    simulated head moving in real time
     python -m web --backend pigpio --host 0.0.0.0   on the Pi, reachable over its WiFi
 
+Once the socket is bound it prints the URLs it can be opened on (with --host 0.0.0.0, one per
+network interface, the SSH address first), so a headless Pi tells you where to point the
+laptop's browser. -v also turns on uvicorn's request log.
+
 On the Pi pigpiod must be running (hal/README.md). Until hal/tmc2209.py configures the
 drivers over UART, PAN runs 1/8 and TILT 1/32 microstepping, so do not move the real head
 with this yet.
@@ -20,8 +24,47 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from service.controller import DEFAULT_DATA_DIR, RigController  # noqa: E402
 from web.api import create_app  # noqa: E402
+from web.netinfo import is_loopback, server_urls, ssh_server_ip  # noqa: E402
 
 log = logging.getLogger("web")
+
+
+def banner(args: argparse.Namespace, rig: RigController) -> str:
+    """What the operator needs on a headless Pi: where to open it, and what is running."""
+    st = rig.status()
+    lines = ["", "UGR rig server running", ""]
+    urls = server_urls(args.host, args.port, ssh_ip=ssh_server_ip())
+    width = max(len(u) for u, _ in urls)
+    lines += [f"  {u:<{width}}   {note}".rstrip() for u, note in urls]
+    if is_loopback(args.host) and ssh_server_ip():
+        lines += ["", "  You are on SSH but the server only listens on this machine.",
+                  f"  To open it from your laptop: python -m web --host 0.0.0.0 --port {args.port}"]
+    backend = args.backend + (f" (time scale {args.time_scale:g})" if args.backend == "sim" else "")
+    lines += ["",
+              f"  backend   {backend}",
+              f"  mount     {args.config or 'config/mount.toml (default)'}",
+              f"  data      {rig.data_dir}",
+              f"  head      drivers {'on' if st['enabled'] else 'off'}, "
+              f"{'zeroed' if st['zeroed'] else 'not zeroed'}",
+              f"  API       {urls[0][0]}/api/status",
+              "", "  Ctrl+C to stop.", ""]
+    return "\n".join(lines)
+
+
+def run_server(app, args: argparse.Namespace, rig: RigController) -> None:
+    import uvicorn
+
+    class Server(uvicorn.Server):
+        # Print only once the socket is bound: a busy port exits inside startup().
+        async def startup(self, sockets=None) -> None:
+            await super().startup(sockets=sockets)
+            if self.started and not self.should_exit:
+                print(banner(args, rig), flush=True)
+
+    config = uvicorn.Config(app, host=args.host, port=args.port,
+                            log_level="info" if args.verbose else "warning",
+                            access_log=args.verbose)
+    Server(config).run()
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -36,12 +79,12 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--host", default="127.0.0.1",
                    help="0.0.0.0 on the Pi to serve its WiFi (default: %(default)s)")
     p.add_argument("--port", type=int, default=8000)
-    p.add_argument("-v", "--verbose", action="store_true")
+    p.add_argument("-v", "--verbose", action="store_true",
+                   help="debug logging and one line per HTTP request")
     args = p.parse_args(argv)
 
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
                         format="%(levelname)s %(name)s: %(message)s")
-    import uvicorn
 
     kwargs = {"time_scale": args.time_scale} if args.backend == "sim" else {}
     if args.backend == "pigpio":
@@ -49,9 +92,10 @@ def main(argv: list[str] | None = None) -> int:
                     "not configured (PAN 1/8, TILT 1/32 microstepping). Do not move the real head.")
     rig = RigController.from_config(args.backend, args.data, args.config, **kwargs)
     try:
-        uvicorn.run(create_app(rig), host=args.host, port=args.port, log_level="warning")
+        run_server(create_app(rig), args, rig)
     finally:
         rig.close()  # drivers released on every exit path
+        print("rig server stopped, drivers released", flush=True)
     return 0
 
 
