@@ -4,13 +4,15 @@ Raspberry Pi 4 rig that measures discomfort glare (CIE 117 UGR) in truck cabins.
 2000D on a stepper pan-tilt head shoots HDR brackets per direction. The Pi turns each bracket into
 a calibrated luminance map, glare sources and a UGR value, and serves a web UI over its own WiFi.
 The rig exists to **compare cabins and configurations**, so repeatability between sessions beats
-absolute accuracy, and every result carries the parameters that produced it.
+absolute accuracy, and every result carries the parameters that produced it. Each position gets a
+UGR along the camera axis; the study's headline is a forward-gaze UGR over all positions, and
+reflections of the cab's lights in the glazing count as sources.
 
 ## Read first
 
 | Doc | What's in it |
 |---|---|
-| `REQUIREMENTS.md` | Measurement model, calibration, functional requirements, data model, open items |
+| `REQUIREMENTS.md` | Measurement model, calibration, functional requirements (motion API, web pages, outputs, metrics), data model, open items |
 | `docs/CAMERA_AND_PROCESSING.md` | Camera control, bracket, merge, calibration, detection, UGR, `ugrctl` |
 | `hal/README.md` | Mount driver: use, sim testing, pigpiod setup |
 | `docs/PIVOT_DETAIL.md`, `docs/CONNECTIONS.md` | Head spec and wiring (hardware docs) |
@@ -37,16 +39,21 @@ Run both selftests and pytest before calling a change done.
 ```
 hal/         ONLY layer that touches hardware
   config.py motion.py backend.py mount.py    pan-tilt head (pigpio step/dir) + SimBackend
+                                             continuous jog with controlled stop: planned
   camera_config.py camera.py camera_sim.py   2000D over python-gphoto2 + FakeCamera
+                                             live view (preview frames): planned
   tmc2209.py                                 NOT WRITTEN YET - next hardware task
 photometry/  profile (analysis.toml) · linearise (CR2 -> superpixels) · hdr (Debevec merge)
              · calibration (k) · masks (pixel direction/solid angle, Guth/Iwata position index)
 analysis/    detection (ROIs, threshold blobs) · background (L_b) · ugr
-report/      heatmap.png renderer. PDF/CSV session reports not started
-pipeline/    region.py: one direction, bracket dir -> result dir. Session/job queue not started
-storage/ web/  not started (SQLite; FastAPI + minimal frontend)
-config/      mount.toml · camera.toml · analysis.toml
-tools/       mountctl.py (head bench CLI) · ugrctl.py (camera + processing CLI)
+             planned: glazing/reflections in detection, forward.py (all positions, forward gaze)
+report/      heatmap.png renderer. Photo, maps, source boxes, stamp, Excel, PDF not started
+pipeline/    region.py: one direction, bracket dir -> result dir. study.py not started
+service/     planned: owns mount + camera, jog heartbeat, positions, session sequence, job queue
+storage/     not started: data directory (profiles/, studies/), SQLite index
+web/         not started: FastAPI over service/, home / movement / camera calibration pages
+config/      mount.toml · camera.toml · analysis.toml (also the template for camera profiles)
+tools/       mountctl.py (head bench CLI) · ugrctl.py (camera + processing CLI) · rigctl planned
 tests/       pytest
 ```
 
@@ -63,8 +70,12 @@ talks to hardware, so it is always testable on a desk against stored brackets.
   simulator (`SimBackend`, `FakeCamera`). Keep it that way for anything new (e.g. `tmc2209`).
 - **No GPL dependencies.** LGPL is fine (python-gphoto2, libgphoto2). PyTmcStepper was rejected
   for this reason.
-- **Every physical constant lives in `config/*.toml`**, not in code. Values marked `MEASURE` are
-  placeholders until measured on the real hardware. Don't "fix" them with guesses.
+- **Every physical constant lives in `config/*.toml` or a camera profile** (TOML in the data
+  directory), not in code. Values marked `MEASURE` are placeholders until measured on the real
+  hardware. Don't "fix" them with guesses.
+- **The service owns the hardware.** Only `service/` holds a mount or camera between requests;
+  `web/` and `rigctl` go through its API and never import `hal`. The head is open-loop, so a
+  process that exits loses its position, and only one process can hold the camera's USB session.
 - **Do not move the real head** until `hal/tmc2209.py` exists and verifies the driver config over
   UART. Without it, PAN runs 1/8 and TILT 1/32 microstepping.
 - **Pi 4 only.** pigpio has no Pi 5 support.
@@ -87,6 +98,12 @@ talks to hardware, so it is always testable on a desk against stored brackets.
   (APEX model), never `t_marked_s`.
 - Working resolution is the 2×2 Bayer superpixel (3000 × 2000). Geometry pitch = raw pitch × binning.
 - Position index: sources **below** the line of sight have lower p (count more) than above.
+- Two UGRs: per position along the camera axis (stamped on that position's images), per study
+  along the forward gaze (the headline). Never average UGR values; the scale is logarithmic.
+- Glazing polygons are not exclusions. In `dark` studies sources inside them are reflections and
+  count, against their own lower threshold; in `daylight` studies glazing is excluded.
+- Saving a position re-approaches it along `approach_sign` first, or replay lands off by the
+  backlash.
 - `k` = cd/m² per (DN · N² / (t · ISO)). `k = 0` means uncalibrated, and `process` refuses
   without `--k`.
 - Hardware CLIs follow `mountctl` style: argparse subcommands, `--backend/--camera sim`, a
@@ -98,13 +115,19 @@ Python with type hints, `from __future__ import annotations`, frozen dataclasses
 `typing.Protocol` for backends, numpy (float32 for image-sized arrays; the Pi has 8 GB, but keep one
 decoded raw frame in memory at a time). Module docstrings explain *why* (the physics or hardware
 reason), not just what. Plain, terse comments. No new heavy dependencies (OpenCV, pandas) without
-asking: the Pi installs from wheels on a microSD card.
+asking: the Pi installs from wheels on a microSD card. Approved: XlsxWriter for the Excel export
+(2026-11-19). The web frontend is fully offline: no CDN, no Node build step.
 
-## Status (2026-10-13)
+## Status (2026-11-19)
 
-Built and sim-tested: mount, camera control (fake libgphoto2 only), the whole processing chain,
-heatmap, `ugrctl`. Not yet run on the real 2000D, on real CR2s, or on the Pi.
+Built and sim-tested: mount, camera control (fake libgphoto2 only), the whole processing chain
+for one position, heatmap, `ugrctl`. Not yet run on the real 2000D, on real CR2s, or on the Pi.
 
-Next, roughly in order: `ugrctl camera info` + one bracket on the body; `hal/tmc2209.py`;
-measure the `MEASURE` constants; session pipeline + `storage/`; `web/`; PDF/CSV reports.
-Open items list: `REQUIREMENTS.md` §9.
+Plan v0.6 is recorded in `REQUIREMENTS.md` (decided 2026-11-19): live view from the camera's own
+feed, motor control service with hold-to-move jog and position profiles, three web pages,
+windscreen reflections, forward-gaze study rating, report images, metrics, Excel.
+
+Next, roughly in order (`REQUIREMENTS.md` §8): camera on the body (`camera info`, one bracket,
+live view); `hal/tmc2209.py`; at the desk meanwhile, continuous jog + `service/` + `rigctl`;
+movement page; `storage/` + session sequence + home page; reflections, forward gaze, report
+images, Excel; camera calibration page, PDF. Open items list: `REQUIREMENTS.md` §9.
