@@ -41,6 +41,7 @@
       <legend>Meter reading</legend>
       <label><input type="radio" name="meter" value="luminance" checked> Luminance meter</label>
       <label><input type="radio" name="meter" value="lux"> Lux meter + panel reflectance</label>
+      <label><input type="radio" name="meter" value="iso"> No meter: estimate from the ISO rating</label>
     </fieldset>
     <div class="row" id="meter-l">
       <label class="stack">Target luminance, cd/m²<input id="lum" type="number" step="any" min="0" inputmode="decimal"></label>
@@ -48,6 +49,20 @@
     <div class="row" id="meter-e" hidden>
       <label class="stack">Illuminance, lx<input id="lux" type="number" step="any" min="0" inputmode="decimal"></label>
       <label class="stack">Reflectance ρ<input id="rho" type="number" step="any" min="0" max="1" inputmode="decimal"></label>
+    </div>
+    <div id="meter-iso" hidden>
+      <div class="row">
+        <label class="stack">Lens factor q<input id="iso-q" type="number" step="any" min="0.2" max="1"
+          inputmode="decimal" placeholder="config: 0.65"></label>
+        <label class="stack">Saturation ISO ÷ label<input id="iso-ratio" type="number" step="any" min="0.25"
+          max="4" inputmode="decimal" placeholder="config: 1.0"></label>
+      </div>
+      <p class="hint">Aim at a neutral grey or white surface (grey card, white wall) under daylight
+        or white LED light, and drag the box on it. Its brightness is not measured, only its
+        colour matters. k comes from the camera's ISO rating (ISO 12232): about ±30 %, so fine for
+        comparing cabs with the same k, not for absolute values. Studies on it are flagged.
+        Empty fields use config/analysis.toml; a published saturation ISO for this body (measured
+        ISO ÷ label) narrows the error.</p>
     </div>
     <button id="shoot" class="primary big">Shoot calibration bracket</button>
     <div id="cal-result" class="cal-result" hidden></div>

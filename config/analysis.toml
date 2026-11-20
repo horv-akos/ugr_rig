@@ -26,6 +26,10 @@ k = 0.0                         # cd/m2 per (DN * N^2 / (t * ISO)). 0 = uncalibr
                                 # still produced, in relative units, and flagged
 k_drift_warn = 0.10             # session k differing from the stored one by more = warning
 spectral_factor = 1.0           # global factor until the per-source-type table is measured
+# k estimate from the ISO rating, when no meter is at hand (camera page). +-30 %, flagged.
+iso_q = 0.65                    # ISO 12232 lens factor: pi/4 x transmission x vignetting
+iso_saturation_ratio = 1.0      # measured saturation ISO / labelled ISO (published sensor
+                                # tests); 1.0 trusts the label
 
 [calibration.spectral_factors]  # per source type, selected by inclusion ROI. MEASURE
 # white_led = 1.00

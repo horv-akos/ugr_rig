@@ -259,19 +259,37 @@ class RigController:
         return {"info": info, "profile": prof.name, "mismatch": prof.body_check(info)}
 
     def calibrate(self, profile: str, roi: list[float], luminance: float | None = None,
-                  lux: float | None = None, rho: float | None = None) -> Motion:
+                  lux: float | None = None, rho: float | None = None, method: str = "meter",
+                  q: float | None = None, iso_ratio: float | None = None) -> Motion:
         """Shoot a bracket of the matt target and measure k inside `roi` (normalised x0, y0,
         x1, y1) against the meter: a luminance reading, or illuminance on a panel of
         reflectance rho (L = rho E / pi). The result is offered, not applied: the operator
-        accepts it into the profile (`accept_calibration`)."""
+        accepts it into the profile (`accept_calibration`).
+
+        method "iso": no meter. k is estimated from the camera's ISO rating (ISO 12232)
+        with one frame of a neutral surface in `roi` (photometry.calibration.iso_estimate);
+        q and iso_ratio default to config/analysis.toml."""
         from hal.camera_config import load_camera_config
         from photometry.calibration import target_luminance
+        from photometry.profile import load_analysis_config
         from pipeline import study as worker
 
         prof = self.camera_profiles.load(profile)
-        target = target_luminance(luminance, lux, rho)
-        if not target > 0:
-            raise ValueError("the target luminance must be positive")
+        if method == "iso":
+            cal = load_analysis_config().calibration
+            q = cal.iso_q if q is None else float(q)
+            iso_ratio = cal.iso_saturation_ratio if iso_ratio is None else float(iso_ratio)
+            if not (0.2 <= q <= 1.0 and 0.25 <= iso_ratio <= 4.0):
+                raise ValueError("q must be 0.2 to 1, the saturation ISO ratio 0.25 to 4")
+            target = None
+            meter: dict[str, Any] = {"q": q, "iso_ratio": iso_ratio}
+        elif method == "meter":
+            target = target_luminance(luminance, lux, rho)
+            if not target > 0:
+                raise ValueError("the target luminance must be positive")
+            meter = {"luminance": luminance, "lux": lux, "rho": rho}
+        else:
+            raise ValueError("method must be meter or iso")
         if len(roi) != 4 or not (0 <= roi[0] < roi[2] <= 1 and 0 <= roi[1] < roi[3] <= 1):
             raise ValueError("ROI is x0, y0, x1, y1, normalised 0..1 from the top left")
         with self._lock:
@@ -293,10 +311,11 @@ class RigController:
                 overrides["calibration.k"] = prof.k     # drift against the stored value only
                 m = self.pool().submit(worker.process_calibration, {
                     "bracket": str(d / "bracket"), "roi": list(roi), "target_cd_m2": target,
+                    "method": method, "q": q, "iso_ratio": iso_ratio,
                     "overrides": overrides}).result()
                 record = {"id": cid, "at": now_iso(), "profile": prof.name,
-                          "profile_hash": prof.content_hash,
-                          "meter": {"luminance": luminance, "lux": lux, "rho": rho},
+                          "profile_hash": prof.content_hash, "method": method,
+                          "meter": meter,
                           "measurement": m, "body_mismatch": mismatch, "notes": notes,
                           "accepted_at": None}
                 (d / "calibration.json").write_text(json.dumps(record, indent=2),
@@ -325,10 +344,14 @@ class RigController:
         if rec["profile"] != profile:
             raise RigError(f"calibration {calibration} was made with profile {rec['profile']}")
         m = rec["measurement"]
+        iso = rec.get("method") == "iso"
+        note = (f"ISO 12232 estimate: q {m['q']:g}, saturation ISO / label {m['iso_ratio']:g}, "
+                f"DN_sat {m['dn_sat']:.0f} ({m['first_clip']} clips first)") if iso else ""
         with self._profiles_lock:
             p = self.camera_profiles.load(profile).with_k(KRecord(
-                at=rec["at"], k=m["k"], target_cd_m2=m["target_cd_m2"], roi=tuple(m["roi"]),
-                cv=m["cv"], drift=m["drift"], calibration=calibration))
+                at=rec["at"], k=m["k"], target_cd_m2=m.get("target_cd_m2"),
+                roi=tuple(m["roi"]), cv=m["cv"], drift=m["drift"], calibration=calibration,
+                source="iso" if iso else "target", note=note))
             self.camera_profiles.save(p)
         rec["accepted_at"] = now_iso()
         f.write_text(json.dumps(rec, indent=2), encoding="utf-8")

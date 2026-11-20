@@ -40,7 +40,7 @@ SCHEMA = 1
 HISTORY_KEEP = 50
 
 
-K_SOURCES = ("target", "typed")
+K_SOURCES = ("target", "typed", "iso")
 
 
 @dataclass(frozen=True)
@@ -52,8 +52,9 @@ class KRecord:
     cv: float | None = None                                 # target only
     drift: float | None = None     # against the k it replaced
     calibration: str = ""          # the calibration folder it came from (target)
-    source: str = "target"         # target: measured on the camera page; typed: entered by hand
-    note: str = ""                 # typed: where the value comes from
+    source: str = "target"         # target: measured with a meter; typed: entered by hand;
+                                   # iso: estimated from the ISO rating (no meter, +-30 %)
+    note: str = ""                 # typed: where the value comes from; iso: q, ratio, DN_sat
 
 
 @dataclass(frozen=True)
@@ -164,7 +165,7 @@ class CameraProfile:
 
     @property
     def k_source(self) -> str:
-        """Where the current k comes from: target, typed, or config (never recorded)."""
+        """Where the current k comes from: target, typed, iso, or config (never recorded)."""
         if not self.k:
             return ""
         last = self.k_history[-1] if self.k_history else None
@@ -172,7 +173,7 @@ class CameraProfile:
 
     @property
     def k_note(self) -> str:
-        return self.k_history[-1].note if self.k_source == "typed" else ""
+        return self.k_history[-1].note if self.k_source in ("typed", "iso") else ""
 
     def validate(self) -> None:
         if not 4.0 <= self.focal_mm <= 1000.0:

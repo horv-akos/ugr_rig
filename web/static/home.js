@@ -107,7 +107,8 @@ function camCheck() {
   const c = camProfiles.find((p) => p.name === $("camprof").value);
   if (!c) return [false, "a camera profile"];
   if (c.k) return [true, c.k_source === "typed" ? `camera profile: k ${c.k.toPrecision(4)}, typed by hand`
-    : `camera profile calibrated (k ${c.k.toPrecision(4)})`];
+    : c.k_source === "iso" ? `camera profile: k ${c.k.toPrecision(4)}, estimated from the ISO rating (±30 %)`
+      : `camera profile calibrated (k ${c.k.toPrecision(4)})`];
   // Uncalibrated is allowed (the simulator knows its k; a real study is flagged), but shown.
   return [st.live_view.source === "sim", st.live_view.source === "sim"
     ? "camera profile not calibrated (the simulator uses its own k)" : "camera profile not calibrated"];

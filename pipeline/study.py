@@ -79,8 +79,13 @@ def process_calibration(job: dict[str, Any]) -> dict[str, Any]:
     """k from a bracket of the matt target: the ROI's mean signal against the meter's
     luminance (photometry.calibration.measure_k). Raises on clipping or no signal."""
     cfg = config(job.get("overrides"))
+    if job.get("method") == "iso":
+        return region.iso_estimate(job["bracket"], cfg, tuple(job["roi"]), float(job["q"]),
+                                   float(job["iso_ratio"])).as_dict()
     m = region.calibrate(job["bracket"], cfg, tuple(job["roi"]), float(job["target_cd_m2"]))
-    return m.as_dict()
+    d = m.as_dict()
+    d["method"] = "meter"
+    return d
 
 
 def write_report(job: dict[str, Any]) -> str:

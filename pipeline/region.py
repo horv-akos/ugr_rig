@@ -261,6 +261,36 @@ def calibrate(bracket_dir: str | Path, cfg: AnalysisConfig,
                                  vig, cfg.calibration.k, cfg.calibration.k_drift_warn)
 
 
+def iso_estimate(bracket_dir: str | Path, cfg: AnalysisConfig,
+                 roi: tuple[float, float, float, float], q: float, iso_ratio: float
+                 ) -> calibration.IsoEstimate:
+    """k from the ISO rating: the best-exposed frame of the bracket in which the ROI is
+    neither clipped nor dark. One raw frame in memory at a time."""
+    bracket_dir = Path(bracket_dir)
+    manifest = BracketManifest.load(bracket_dir)
+    if not manifest.finished_at:
+        raise ValueError(f"{bracket_dir}: bracket is incomplete (capture was interrupted)")
+    best, errors = None, []
+    for rec in sorted(manifest.frames, key=lambda f: f.t_effective_s):
+        raw = linearise.read_frame(bracket_dir / rec.file, manifest.format)
+        weights, _ = linearise.luminance_weights(raw, cfg.processing.luminance_weights)
+        try:
+            e = calibration.iso_estimate(raw, weights, roi, q, iso_ratio,
+                                         cfg.sensor.saturation_fraction, cfg.calibration.k,
+                                         cfg.calibration.k_drift_warn, rec.shutter_label)
+        except ValueError as exc:
+            errors.append(str(exc))
+            continue
+        finally:
+            del raw
+        if best is None or e.exposure_fraction > best.exposure_fraction:
+            best = e
+    if best is None:
+        raise ValueError("no frame of the bracket exposes the ROI well: "
+                         + (errors[-1] if errors else "no frames"))
+    return best
+
+
 def background_from_sweep(bracket_dirs: list[str | Path], cfg: AnalysisConfig,
                           k: float | None = None) -> dict[str, Any]:
     """Hemisphere sweep -> E_ind and L_b for the session.

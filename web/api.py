@@ -116,6 +116,9 @@ class Calibrate(BaseModel):
     luminance: float | None = Field(None, gt=0)
     lux: float | None = Field(None, gt=0)
     rho: float | None = Field(None, gt=0, le=1)
+    method: Literal["meter", "iso"] = "meter"
+    q: float | None = Field(None, ge=0.2, le=1)            # iso: ISO 12232 lens factor
+    iso_ratio: float | None = Field(None, ge=0.25, le=4)   # iso: saturation ISO / label
     wait: bool = False
 
 
@@ -348,7 +351,8 @@ def create_app(rig: RigController) -> FastAPI:
 
     @app.post("/api/camera/calibrate")
     def calibrate(body: Calibrate) -> dict[str, Any]:
-        m = rig.calibrate(body.profile, body.roi, body.luminance, body.lux, body.rho)
+        m = rig.calibrate(body.profile, body.roi, body.luminance, body.lux, body.rho,
+                          body.method, body.q, body.iso_ratio)
         return motion(m, body.wait)
 
     @app.get("/api/camera/calibrations")

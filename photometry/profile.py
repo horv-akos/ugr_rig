@@ -38,6 +38,8 @@ class CalibrationConfig:
     k_drift_warn: float
     spectral_factor: float
     spectral_factors: dict[str, float] = field(default_factory=dict)
+    iso_q: float = 0.65               # ISO 12232 lens factor, for the k estimate without a meter
+    iso_saturation_ratio: float = 1.0  # measured saturation ISO / labelled ISO
 
     def factor(self, source_type: str | None) -> float:
         if source_type and source_type in self.spectral_factors:
@@ -148,6 +150,8 @@ def load_analysis_config(path: str | Path | None = None) -> AnalysisConfig:
             spectral_factor=float(c.get("spectral_factor", 1.0)),
             spectral_factors={str(k): float(v)
                               for k, v in c.get("spectral_factors", {}).items()},
+            iso_q=float(c.get("iso_q", 0.65)),
+            iso_saturation_ratio=float(c.get("iso_saturation_ratio", 1.0)),
         ),
         processing=ProcessingConfig(binning=binning, luminance_weights=weights),
         detection=DetectionConfig(

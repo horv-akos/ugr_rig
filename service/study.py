@@ -210,6 +210,12 @@ class StudyRun:
             self.step("calibration", "skipped",
                       f"k {prof.k:.5g} typed by hand at {last.at}: {last.note}")
             self.flag(f"k typed by hand, not measured this session ({last.note})")
+        elif prof.k_source == "iso":
+            # An estimate from the ISO rating checks nothing: never the session's calibration.
+            self.step("calibration", "skipped",
+                      f"k {prof.k:.5g} estimated from the ISO rating at {last.at}, no meter")
+            self.flag("k estimated from the camera's ISO rating (about +-30 %), not measured "
+                      "with a meter")
         elif last and age_h is not None and age_h <= CALIBRATION_FRESH_H:
             drift = "" if last.drift is None else f", {100 * last.drift:+.1f} % from the value before"
             self.step("calibration", "done",

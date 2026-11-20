@@ -112,6 +112,31 @@ def test_calibration_recovers_k_and_accept_records_it(tmp_path):
         rig.close()
 
 
+def test_iso_estimate_on_the_simulator_is_offered_and_flagged(tmp_path):
+    rig = rig_at_display(tmp_path)
+    try:
+        name = rig.camera_profile().name
+        rec = rig.wait(rig.calibrate(name, ROI, method="iso"), timeout=60)["result"]
+        m = rec["measurement"]
+        assert rec["method"] == "iso" and m["q"] == 0.65 and m["iso_ratio"] == 1.0
+        # the simulator's white level was never made to match an ISO rating, so only the
+        # formula is checked here, not the simulator's k
+        assert m["k"] == pytest.approx(78 / (0.65 * m["dn_sat"]))
+        p = rig.accept_calibration(name, rec["id"])
+        assert p.k_source == "iso" and "ISO 12232" in p.k_note and p.k_history[-1].target_cd_m2 is None
+
+        rig.create_profile("cab", "sim")
+        rig.wait(rig.save_position("cab", "display"))
+        _, sid = rig.start_study("cab", "dark", sweep=False, check=False)
+        steps = _wait_steps(rig, sid)
+        assert steps["calibration"]["state"] == "skipped"     # fresh, but an estimate
+        assert any("ISO rating" in str(f) for f in rig.study(sid)["flags"])
+        with pytest.raises(ValueError):
+            rig.calibrate(name, ROI, method="iso", q=2.0)
+    finally:
+        rig.close()
+
+
 def test_bad_roi_and_meter_are_refused(tmp_path):
     rig = rig_at_display(tmp_path)
     try:

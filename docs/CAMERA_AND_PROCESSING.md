@@ -136,7 +136,13 @@ the old value kept in the profile's history. `k` lives in the camera profile
 (`<data>/profiles/camera/<name>.toml`), not in `config/analysis.toml`, which only seeds the first
 profile. A calibration accepted within 12 h counts as a study's calibration shot.
 
-Without a meter, type `k` on the same page ("Or type k"), with a note on where it comes from. It
+With no meter at all, choose "No meter: estimate from the ISO rating", aim at a neutral grey or
+white surface (grey card, white wall) under daylight or white LED light, drag the box and shoot.
+`k = 78 / (q · DN_sat)` (ISO 12232; `photometry/calibration.py` explains it), with q and the
+saturation ISO ratio from `config/analysis.toml [calibration]` unless typed on the page. About
+±30 %; accepted like a measurement, recorded as source `iso`, and studies on it are flagged.
+
+Or type `k` on the same page ("Or type k"), with a note on where it comes from. It
 replaces the stored value, whatever its source; the history keeps the old one. Studies using a
 typed `k` skip the calibration step and are flagged "k typed by hand".
 

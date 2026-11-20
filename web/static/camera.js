@@ -119,16 +119,30 @@ function wireRoi() {
 
 // ---------------------------------------------------------------- calibration
 
+function meterMode() { return document.querySelector('input[name="meter"]:checked').value; }
+
 async function shoot() {
-  const lux = document.querySelector('input[name="meter"]:checked').value === "lux";
+  const mode = meterMode();
   const body = { profile: prof.name, roi };
-  if (lux) { body.lux = Number($("lux").value); body.rho = Number($("rho").value); } else { body.luminance = Number($("lum").value); }
-  if ((lux && !(body.lux > 0 && body.rho > 0 && body.rho <= 1)) || (!lux && !(body.luminance > 0))) {
-    say("enter the meter reading first", "warn");
-    return;
+  if (mode === "iso") {
+    body.method = "iso";
+    if ($("iso-q").value) body.q = Number($("iso-q").value);
+    if ($("iso-ratio").value) body.iso_ratio = Number($("iso-ratio").value);
+    if ((body.q !== undefined && !(body.q >= 0.2 && body.q <= 1))
+      || (body.iso_ratio !== undefined && !(body.iso_ratio >= 0.25 && body.iso_ratio <= 4))) {
+      say("q must be 0.2 to 1, the ISO ratio 0.25 to 4 (or leave them empty)", "warn");
+      return;
+    }
+  } else if (mode === "lux") {
+    body.lux = Number($("lux").value); body.rho = Number($("rho").value);
+    if (!(body.lux > 0 && body.rho > 0 && body.rho <= 1)) { say("enter the meter reading first", "warn"); return; }
+  } else {
+    body.luminance = Number($("lum").value);
+    if (!(body.luminance > 0)) { say("enter the meter reading first", "warn"); return; }
   }
   $("cal-result").hidden = true;
-  await act(() => api("POST", "/api/camera/calibrate", body), "shooting the target…");
+  await act(() => api("POST", "/api/camera/calibrate", body),
+    mode === "iso" ? "shooting the surface…" : "shooting the target…");
 }
 
 function pct(x) { return x === null || x === undefined ? "—" : `${x >= 0 ? "+" : "−"}${Math.abs(100 * x).toFixed(1)} %`; }
@@ -143,22 +157,30 @@ function showResult(m) {
     say(`calibration failed: ${m.error.detail}`, "bad");
     return;
   }
-  const r = m.result, k = r.measurement;
+  const r = m.result, k = r.measurement, iso = k.method === "iso";
   pending = r.id;
   const big = k.drift !== null && Math.abs(k.drift) > 0.10;
   box.className = `cal-result ${big ? "warn" : "ok"}`;
   box.replaceChildren(
-    el("div", { class: "kbig" }, `k = ${k.k.toPrecision(5)}`),
-    el("div", {}, k.k_stored ? `stored ${k.k_stored.toPrecision(5)}, drift ${pct(k.drift)}` : "profile not calibrated before"),
-    el("div", { class: "muted small" }, `target ${k.target_cd_m2.toFixed(1)} cd/m² · uniformity in the box ${(100 * k.cv).toFixed(1)} % · ${k.n_px} px`),
-    big ? el("p", { class: "warn" }, "More than 10 % from the stored value: lens, aperture, a filter or in-camera processing changed? Check before accepting.") : "",
-    k.cv > 0.05 ? el("p", { class: "warn" }, "The box is not uniform (> 5 %): is it fully on the target?") : "",
+    el("div", { class: "kbig" }, `k = ${k.k.toPrecision(5)}${iso ? " (estimate)" : ""}`),
+    el("div", {}, k.k_stored ? `stored ${k.k_stored.toPrecision(5)}, ${iso ? "difference" : "drift"} ${pct(k.drift)}` : "profile not calibrated before"),
+    iso ? el("div", { class: "muted small" }, `from the ISO rating: q ${k.q}, saturation ISO ÷ label ${k.iso_ratio}, `
+      + `DN at saturation ${k.dn_sat.toFixed(0)} (${k.first_clip} clips first) · frame ${k.shutter} s at `
+      + `${(100 * k.exposure_fraction).toFixed(0)} % of white · ${k.n_px} px`)
+      : el("div", { class: "muted small" }, `target ${k.target_cd_m2.toFixed(1)} cd/m² · uniformity in the box ${(100 * k.cv).toFixed(1)} % · ${k.n_px} px`),
+    iso ? el("p", { class: "hint" }, "About ±30 % (the camera's ISO label and q). Accepting it replaces the stored k; studies on it are flagged.") : "",
+    big && !iso ? el("p", { class: "warn" }, "More than 10 % from the stored value: lens, aperture, a filter or in-camera processing changed? Check before accepting.") : "",
+    big && iso && k_measured() ? el("p", { class: "warn" }, "The stored k was measured with a meter: the meter value is the better one. Accepting the estimate replaces it.") : "",
+    k.cv > 0.05 ? el("p", { class: "warn" }, iso ? "The colour is not even in the box (> 5 %): is it on one neutral surface?"
+      : "The box is not uniform (> 5 %): is it fully on the target?") : "",
     ...(r.body_mismatch || []).map((x) => el("p", { class: "warn" }, x)),
     el("div", { class: "row" }, el("button", { class: "primary", onclick: () => accept(r.id) }, "Accept into the profile"),
       el("button", { class: "quiet", onclick: () => { box.hidden = true; } }, "Discard")));
-  say(`measured k ${k.k.toPrecision(5)}${k.k_stored ? `, drift ${pct(k.drift)}` : ""}`);
+  say(`${iso ? "estimated" : "measured"} k ${k.k.toPrecision(5)}${k.k_stored ? `, ${iso ? "difference" : "drift"} ${pct(k.drift)}` : ""}`);
   loadCalibrations();
 }
+
+function k_measured() { return !!prof && prof.k_source === "target"; }
 
 async function accept(id) {
   const p = await act(() => api("POST", `/api/camera/profiles/${seg(prof.name)}/accept`, { calibration: id }),
@@ -171,7 +193,8 @@ async function loadCalibrations() {
   const rows = await api("GET", `/api/camera/calibrations?profile=${encodeURIComponent(prof.name)}`).catch(() => []);
   $("cal-rows").replaceChildren(...(rows.length ? rows.map((r) => el("tr", {},
     el("td", { class: "muted" }, r.at.replace("T", " ").replace("Z", "")),
-    el("td", { class: "num" }, r.measurement.k.toPrecision(5)),
+    el("td", { class: "num" }, r.measurement.k.toPrecision(5),
+      r.method === "iso" ? el("span", { class: "muted small" }, " ISO est.") : ""),
     el("td", { class: "num" }, pct(r.measurement.drift)),
     el("td", { class: "num" }, `${(100 * r.measurement.cv).toFixed(1)} %`),
     el("td", {}, r.accepted_at ? "accepted" : el("button", { class: "quiet", onclick: () => accept(r.id) }, "Accept"))))
@@ -208,7 +231,7 @@ async function loadProfile() {
     el("td", { class: "muted" }, utc(r.at)),
     el("td", { class: "num" }, r.k.toPrecision(5)),
     el("td", { class: "num" }, pct(r.drift)),
-    el("td", {}, r.source === "typed" ? `typed: ${r.note}`
+    el("td", {}, r.source === "typed" ? `typed: ${r.note}` : r.source === "iso" ? r.note
       : `target ${r.target_cd_m2 === null ? "" : `${r.target_cd_m2.toFixed(0)} cd/m²`}`)))
     : [el("tr", { class: "empty" }, el("td", { colspan: 4 },
       prof.k ? "k from the config template, never measured or typed here." : "No k yet."))]));
@@ -216,7 +239,8 @@ async function loadProfile() {
   loadCalibrations();
 }
 
-const SOURCE = { target: "measured on the target", typed: "typed by hand", config: "from the config template" };
+const SOURCE = { target: "measured on the target", typed: "typed by hand", iso: "estimated from the ISO rating",
+  config: "from the config template" };
 
 function utc(iso) { return iso.replace("T", " ").replace("Z", ""); }
 
@@ -271,9 +295,10 @@ function wire() {
   if (roi) $("cal-roi").textContent = "the box from last time";
   for (const r of document.querySelectorAll('input[name="meter"]')) {
     r.addEventListener("change", () => {
-      const lux = r.value === "lux" && r.checked;
-      $("meter-e").hidden = !lux;
-      $("meter-l").hidden = lux;
+      const mode = meterMode();
+      $("meter-l").hidden = mode !== "luminance";
+      $("meter-e").hidden = mode !== "lux";
+      $("meter-iso").hidden = mode !== "iso";
     });
   }
   $("shoot").addEventListener("click", shoot);

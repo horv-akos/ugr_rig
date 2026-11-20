@@ -120,7 +120,7 @@ where to point the laptop's browser. Bound to 127.0.0.1 over SSH it says how to 
 | `report`: photo, contribution map, source map, masks, UGR stamp, Excel; re-analysis | **Built**, sim-tested; CR2 photo untested; PDF not started |
 | `web`: movement calibration page, reference images, mask editor | **Built**, sim-tested; tiling, coverage map and aim check to come |
 | `web`: home page (start a study, steps, results, library, zip) | **Built**, sim-tested |
-| `web`: camera page: camera profiles, `k` from the target or typed in, `k` history, lens geometry maps | **Built**, sim-tested; lens geometry by spot tracking and vignetting not started |
+| `web`: camera page: camera profiles, `k` from the target, estimated from the ISO rating, or typed in, `k` history, lens geometry maps | **Built**, sim-tested; lens geometry by spot tracking and vignetting not started |
 
 ---
 

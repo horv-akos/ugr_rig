@@ -148,8 +148,8 @@ talks to hardware, so it is always testable on a desk against stored brackets.
 - Pages are dark on purpose (a bright screen lights the cab and reflects in the glazing), and
   build DOM with `el()` from `web/static/api.js`, never `innerHTML` with operator-typed names.
 - `k` = cd/m² per (DN · N² / (t · ISO)). `k = 0` means uncalibrated, and `process` refuses
-  without `--k`. In a camera profile `k` is measured on the target or typed with a note (no
-  meter at hand); the newest wins, the history keeps each value's source, and a study on a
+  without `--k`. In a camera profile `k` is measured on the target, estimated from the ISO
+  rating (ISO 12232, ±30 %, no meter), or typed with a note; the newest wins, the history keeps each value's source, and a study on a
   typed `k` is flagged.
 - Hardware CLIs follow `mountctl` style: argparse subcommands, `--backend/--camera sim`, a
   `selftest` that checks against known answers.

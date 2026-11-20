@@ -229,6 +229,19 @@ profile's current `k` was typed records the calibration step as skipped, carries
 the note in `study.json`, and is flagged "k typed by hand". A typed `k` is only as good as its
 source: with no meter, nothing in the session checks it.
 
+**Estimate from the ISO rating** (built 2026-11-20, no meter needed). ISO 12232 defines the
+saturation-based speed S from the focal-plane exposure that just saturates the sensor,
+S = 78 / H_sat, with H = q·L·t/N² (q = 0.65 for a typical lens). That gives
+`k = 78 / (q · DN_sat)`, where DN_sat is the luminance-mix signal when the first raw channel
+reaches the white level. It is measured from one bracket of a neutral grey or white surface
+(its luminance is not needed, only its colour, which sets which channel clips first), using the
+best-exposed unclipped frame. Error about ±30 %: the camera's ISO label (makers leave headroom)
+and q. `iso_saturation_ratio` (measured saturation ISO ÷ label, from published sensor tests)
+removes most of the first. Offered and accepted like a target calibration, recorded with
+source `iso`; studies on it skip the calibration step and are flagged. Useful for comparing
+cabs measured with the same `k`, where a scale error cancels to 8·log₁₀(c) UGR, not for
+absolute values.
+
 Useful context on tolerance: a pure scale error in `k` largely cancels, because UGR carries `L²`
 in the numerator and `L_b` in the denominator. Scaling every luminance by `c` shifts UGR by only
 `8·log₁₀(c)` — 10% off in `k` is 0.33 UGR points.
@@ -459,7 +472,8 @@ measurement, the vignetting map and checking the exposure settings against the b
   are typed in and the page shows their solid-angle and position-index maps
 - Luminance calibration: aim at the target in live view, draw the ROI, enter the meter reading
   (luminance, or illuminance and ρ), shoot. Shows the measured `k` against the stored one and the
-  drift; accept into the profile. Or type `k` with a note on where it comes from: it replaces
+  drift; accept into the profile. Without a meter, estimate `k` from the ISO rating (§4.2)
+  from a shot of a neutral surface. Or type `k` with a note on where it comes from: it replaces
   the stored value (the page asks first when it differs). `k` history per profile, with each
   value's source
 - Spectral factor table per source type
@@ -671,6 +685,10 @@ sim-tested.
 ---
 
 ## 9. Open items
+
+- `iso_saturation_ratio` for the 2000D: a published measured saturation ISO at ISO 100 for
+  this body (sensor test sites), so the ISO estimate of `k` starts closer than the label. Not
+  filled in until a source is found; 1.0 trusts the label
 
 - No real-time clock: on its own WiFi the Pi has no internet time, so study ids and
   timestamps can be wrong after a cold start. Decide: an RTC module (hardware), or the page
