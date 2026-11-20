@@ -132,9 +132,9 @@ def test_glazing_is_excluded_and_flagged(tmp_path):
     glazing = dict(DEMO_MASKS, glazing=DEMO_MASKS["exclude"], exclude=[])
     as_glazing = detection.RegionMasks.load(_write(tmp_path / "g.json", glazing))
     a = region.evaluate_region(tmp_path / "b", tmp_path / "oa", cfg, masks=as_exclude,
-                               k=0.0064, heatmap=False)
+                               k=0.0064, images=False)
     b = region.evaluate_region(tmp_path / "b", tmp_path / "ob", cfg, masks=as_glazing,
-                               k=0.0064, heatmap=False)
+                               k=0.0064, images=False)
     assert [s.name for s in a.sources] == [s.name for s in b.sources]
     assert a.ugr == pytest.approx(b.ugr)
     assert any("glazing treated as excluded" in f for f in b.flags)

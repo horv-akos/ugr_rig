@@ -49,9 +49,11 @@ hal/         ONLY layer that touches hardware
                                              before ENABLE, check() before every move
 photometry/  profile (analysis.toml) · linearise (CR2 -> superpixels) · hdr (Debevec merge)
              · calibration (k) · masks (pixel direction/solid angle, Guth/Iwata position index)
-analysis/    detection (ROIs, threshold blobs) · background (L_b) · ugr
+analysis/    detection (ROIs, threshold blobs) · background (L_b) · ugr · metrics (share,
+             UGR without each source, percentiles, threshold sensitivity)
              planned: glazing/reflections in detection, forward.py (all positions, forward gaze)
-report/      heatmap.png renderer. Photo, maps, source boxes, stamp, Excel, PDF not started
+report/      images.py: photo, luminance, contribution, sources, masks (dark, UGR stamp)
+             · excel.py: the study workbook. PDF not started
 pipeline/    region.py: one direction, bracket dir -> result dir · study.py: worker-process
              jobs for a study (sweep -> L_b, regions) and its summary
 service/     controller.py: owns the mount and camera, one motion thread at a time, jog
@@ -157,7 +159,7 @@ asking: the Pi installs from wheels on a microSD card. Approved: XlsxWriter for 
 (2026-11-19); FastAPI + uvicorn for the server (httpx for its tests). The web frontend is fully
 offline: no CDN, no Node build step (so FastAPI's /docs pages are switched off).
 
-## Status (2026-11-19)
+## Status (2026-11-20)
 
 Built and sim-tested: mount (incl. jog, nudge, speed, controlled stop, backlash tracking), the
 rig server (`service/` + `web/api.py`) and `rigctl`, live view (simulated cab on the desk), the
@@ -165,7 +167,8 @@ movement calibration page at `/movement` with reference images and the mask edit
 masks read by detection (excluded and flagged for now), studies end to end (home page at
 `/home`: session sequence, sweep L_b, analysis in a worker process, results, library, zip;
 study folders + SQLite index), camera control (fake libgphoto2 only), the whole processing
-chain for one position, heatmap, `ugrctl`. Not yet run on the real 2000D, on real CR2s, or on
+chain for one position with metrics, report images and the Excel workbook, re-analysis,
+`ugrctl`. Not yet run on the real 2000D, on real CR2s, or on
 the Pi.
 
 Plan v0.6 is recorded in `REQUIREMENTS.md` (decided 2026-11-19): live view from the camera's own
@@ -174,7 +177,6 @@ windscreen reflections, forward-gaze study rating, report images, metrics, Excel
 
 Next, roughly in order (`REQUIREMENTS.md` §8): camera on the body (`camera info`, one bracket,
 live view); `mountctl drivers` on the bench, then the head measurements; Pi setup per
-`deploy/README.md`; at the desk meanwhile, report images (photo, contribution and
-source maps, stamp, dark-friendly heatmap) + Excel; reflections; forward gaze (with the tiling and
-coverage map); camera calibration page (k, then the calibration shot in the sequence); optical
-zeroing + drift check; PDF. Open items list: `REQUIREMENTS.md` §9.
+`deploy/README.md`; at the desk meanwhile, the camera calibration page (k, camera profiles,
+then the calibration shot in the sequence); reflections; forward gaze (with the tiling and
+coverage map); optical zeroing + drift check; PDF. Open items list: `REQUIREMENTS.md` §9.

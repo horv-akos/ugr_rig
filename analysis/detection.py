@@ -113,6 +113,12 @@ class Source:
     p: float = float("nan")
     contribution: float = 0.0
     flags: list[str] = field(default_factory=list)
+    # filled in by analysis.metrics
+    L_median_cd_m2: float = float("nan")
+    share: float = float("nan")          # of the position's sum of L^2 omega / p^2
+    delta_ugr: float | None = None       # UGR with this source minus UGR without it
+    e_eye_lx: float = float("nan")       # direct illuminance at the eye, plane facing the gaze
+    contrast: float = float("nan")       # L / L_b
 
 
 def _describe(idx: int, name: str, kind: str, source_type: str | None,
@@ -132,6 +138,7 @@ def _describe(idx: int, name: str, kind: str, source_type: str | None,
         id=idx, name=name, kind=kind, source_type=source_type, n_px=int(vv.size),
         omega_sr=om, L_cd_m2=float((lum * w).sum() / om) * factor,
         L_peak_cd_m2=float(lum.max()) * factor, spectral_factor=factor,
+        L_median_cd_m2=float(np.median(lum)) * factor,
         centroid_px=(cx, cy),
         bbox_px=(int(uu.min()), int(vv.min()), int(uu.max()), int(vv.max())),
         direction_cam=tuple(float(x) for x in d), clipped_fraction=clip_frac, flags=flags,

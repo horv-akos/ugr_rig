@@ -9,6 +9,10 @@ import { api, el, remember, seg } from "./api.js";
 const $ = (id) => document.getElementById(id);
 const POLL_MS = 1000;
 const FINAL = new Set(["done", "stopped", "failed", "interrupted"]);
+const VIEWS = { sources_map: "Sources", photo: "Photo", luminance_map: "Luminance",
+  contribution_map: "Contribution", masks_map: "Masks" };
+let view = remember("ugr.view") || "sources_map";
+if (!(view in VIEWS)) view = "sources_map";
 
 let st = null;            // /api/status
 let profiles = [];
@@ -176,6 +180,13 @@ function renderStudy() {
 
   $("stop").hidden = s.status !== "recording";
   $("zip").href = `/api/studies/${seg(s.id)}/results.zip`;
+  const xlsx = s.outputs && s.outputs.excel;
+  $("excel").hidden = !xlsx;
+  if (xlsx) $("excel").href = `/api/studies/${seg(s.id)}/files/${xlsx}`;
+  $("reanalyse").hidden = !FINAL.has(s.status);
+  const n = (s.analyses || []).length;
+  $("reanalyse").title = n ? `Analysed ${n + 1} times; earlier results are kept in the study folder`
+    : "Analyse the recorded brackets again (after calibrating k, or an analysis change)";
 }
 
 function renderCards() {
@@ -184,12 +195,15 @@ function renderCards() {
   const entries = [...s.positions, ...(s.check ? [s.check] : [])];
   $("cards").replaceChildren(...entries.map((p) => {
     const r = p.result;
-    const img = r && r.outputs && r.outputs.heatmap
-      ? el("a", { href: `/api/studies/${seg(s.id)}/files/${r.outputs.heatmap}`, target: "_blank",
-        title: "Open the full luminance map" },
-      el("img", { src: `/api/studies/${seg(s.id)}/files/${r.outputs.heatmap}`, alt: `Luminance map of ${p.name}`, loading: "lazy" }))
+    const file = r && r.outputs && (r.outputs[view] || r.outputs.sources_map);
+    const img = file
+      ? el("a", { href: `/api/studies/${seg(s.id)}/files/${file}`, target: "_blank",
+        title: "Open full size" },
+      el("img", { src: `/api/studies/${seg(s.id)}/files/${file}`, alt: `${VIEWS[view]} of ${p.name}`, loading: "lazy" }))
       : el("div", { class: "card-wait muted" }, p.error ? `failed: ${p.error}` : p.state);
     const flags = r ? r.flags : [];
+    const top = r && r.sources && r.sources[0];
+    const sens = r && r.metrics && r.metrics.threshold_sensitivity;
     return el("article", { class: `card${p === s.check ? " check" : ""}` },
       img,
       el("div", { class: "card-body" },
@@ -199,6 +213,10 @@ function renderCards() {
         el("div", { class: "muted small" }, r
           ? `${r.category} · L_b ${r.L_b.toFixed(2)} cd/m² (${r.lb_method}) · ${r.n_sources} source(s)`
           : `pan ${p.pan_deg.toFixed(2)}°, tilt ${p.tilt_deg.toFixed(2)}°`),
+        top ? el("div", { class: "small" }, `Top source: ${top.name} · ${Math.round(100 * top.share)} % of the glare`
+          + (top.delta_ugr !== null && top.delta_ugr !== undefined ? ` · −${top.delta_ugr.toFixed(1)} UGR without it` : "")) : "",
+        sens && sens.length ? el("div", { class: "muted small", title: "UGR at other detection thresholds" },
+          "Threshold " + sens.map((t) => `${t.threshold_cd_m2 >= 1000 ? `${t.threshold_cd_m2 / 1000}k` : t.threshold_cd_m2}: ${fmtUgr(t.ugr)}`).join(" · ")) : "",
         flags.length ? el("details", { class: "small" }, el("summary", {}, `${flags.length} flag(s)`),
           el("ul", {}, ...flags.map((f) => el("li", {}, f)))) : ""));
   }));
@@ -230,6 +248,24 @@ function wire() {
   $("start-form").addEventListener("submit", start);
   $("profile").addEventListener("change", () => st && renderPreflight());
   $("stop").addEventListener("click", () => api("POST", "/api/mount/stop").catch((e) => alert(e.message)));
+  $("reanalyse").addEventListener("click", async () => {
+    if (!study || !confirm("Analyse this study's recorded brackets again? The current results "
+      + "are kept in the study folder under previous/.")) return;
+    try {
+      await api("POST", `/api/studies/${seg(study.id)}/reanalyse`);
+      studyEtag = "";
+      await loadStudy();
+    } catch (e) { alert(e.message); }
+  });
+  const views = $("views");
+  views.replaceChildren(...Object.entries(VIEWS).map(([k, label]) => el("button", {
+    "data-view": k, "aria-pressed": String(k === view), onclick: () => {
+      view = k;
+      remember("ugr.view", k);
+      for (const b of views.children) b.setAttribute("aria-pressed", String(b.dataset.view === k));
+      renderCards();
+    },
+  }, label)));
   $("search").addEventListener("input", () => {
     clearTimeout(searchTimer);
     searchTimer = setTimeout(loadLibrary, 250);

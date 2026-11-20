@@ -89,7 +89,8 @@ class StudyStore:
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
             for f in sorted(base.rglob("*")):
                 rel = f.relative_to(base)
-                if not f.is_file() or rel.parts[0] == "brackets" or f.suffix in (".npy", ".tmp"):
+                if (not f.is_file() or rel.parts[0] in ("brackets", "previous")
+                        or f.suffix in (".npy", ".tmp")):
                     continue
                 z.write(f, f"{study_id}/{rel.as_posix()}")
         return buf.getvalue()

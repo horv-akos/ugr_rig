@@ -20,6 +20,7 @@ the analysis waits; a study can be re-analysed from its own folder later.
 
 from __future__ import annotations
 
+import json
 import logging
 import queue
 import shutil
@@ -273,6 +274,7 @@ class StudyRun:
             if k:
                 n = sum(p.get("result") is not None for p in st["positions"])
                 failed = sum(p["state"] == "failed" for p in st["positions"])
+                self._write_report()
                 self.step("analysis", "failed" if failed and not n else "done",
                           f"{n} position(s) rated" + (f", {failed} failed" if failed else ""))
         finally:
@@ -284,6 +286,69 @@ class StudyRun:
                 st["finished_at"] = now_iso()
             self.save()
             self.analysing.clear()
+
+    def _write_report(self) -> None:
+        """The Excel workbook, from the folder as it now stands."""
+        self.step("analysis", "running", "Excel workbook")
+        with self._lock:
+            self.study["summary"] = worker.summarise(self.study)
+            snapshot = json.loads(json.dumps(self.study, default=str))
+        # Written as the last step of the analysis: give it the status the study ends with.
+        if snapshot["status"] == "analysing":
+            snapshot["status"] = "done"
+        snapshot["finished_at"] = snapshot.get("finished_at") or now_iso()
+        try:
+            self.rig.pool().submit(worker.write_report,
+                                   {"dir": str(self.dir), "study": snapshot}).result()
+        except Exception as exc:   # noqa: BLE001 - the results stand without the workbook
+            log.warning("Excel report failed: %s", exc)
+            self.flag(f"Excel workbook could not be written ({exc})")
+            return
+        with self._lock:
+            self.study.setdefault("outputs", {})["excel"] = "report.xlsx"
+
+    # -- re-analysis ------------------------------------------------------------ #
+
+    def prepare_reanalysis(self) -> None:
+        """Move the previous analysis aside (kept under previous/<time>/), reset every
+        result, and queue the recorded brackets again: sweep first, then positions, check.
+        The study's frozen masks are used, not the profile's current ones."""
+        st = self.study
+        stamp = now_iso().replace(":", "").replace("-", "")
+        old = self.dir / "previous" / stamp
+        moved = []
+        for name in ("results", "background.json", "report.xlsx"):
+            src = self.dir / name
+            if src.exists():
+                old.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(src), str(old / name))
+                moved.append(name)
+        with self._lock:
+            st.setdefault("analyses", []).append(
+                {"at": now_iso(), "previous": f"previous/{stamp}" if moved else None,
+                 "processing": st.get("processing"), "software": st.get("software"),
+                 "summary": st.get("summary")})
+            st["software"] = self.rig.software
+            st["status"] = "analysing"
+            st["finished_at"] = None
+            st["sweep"]["result"] = None
+            st.pop("outputs", None)
+            st["flags"] = [f for f in st["flags"] if not f.startswith((
+                "not analysed: no k", "hemisphere sweep could", "sweep covered",
+                "Excel workbook"))]
+            for e in st["positions"] + ([st["check"]] if st.get("check") else []):
+                e["result"], e["error"] = None, None
+                e["state"] = "captured" if e.get("bracket") else "pending"
+            for s in st["steps"]:
+                if s["key"] == "analysis":
+                    s["state"], s["detail"] = "pending", "re-analysing the recorded brackets"
+        if st["sweep"]["frames"]:
+            self._queue.put(("sweep", None))
+        for e in st["positions"] + ([st["check"]] if st.get("check") else []):
+            if e.get("bracket"):
+                self._queue.put(("position", e))
+        self._queue.put(None)
+        self.save()
 
     def _run_sweep(self, k: float, overrides: dict[str, Any]) -> dict[str, Any] | None:
         self.step("analysis", "running", "hemisphere sweep -> L_b")
@@ -312,7 +377,8 @@ class StudyRun:
         rel = "results/" + entry["bracket"].split("/", 1)[1]
         job = {"bracket": str(self.dir / entry["bracket"]), "out": str(self.dir / rel),
                "masks": str(self.dir / entry["masks"]) if entry.get("masks") else None,
-               "k": k, "lb": lb, "overrides": overrides, "name": entry["name"]}
+               "k": k, "lb": lb, "overrides": overrides, "name": entry["name"],
+               "study": self.study["id"]}
         t0 = time.monotonic()
         try:
             res = self.rig.pool().submit(worker.process_region, job).result()

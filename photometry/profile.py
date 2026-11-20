@@ -56,6 +56,7 @@ class DetectionConfig:
     threshold_cd_m2: float
     min_pixels: int
     merge_radius_px: int
+    sensitivity_cd_m2: tuple[float, ...] = (250.0, 500.0, 1000.0, 2000.0)
 
 
 @dataclass(frozen=True)
@@ -74,6 +75,11 @@ class UGRConfig:
 
 
 @dataclass(frozen=True)
+class ReportConfig:
+    luminance_scale_cd_m2: tuple[float, float] = (1.0, 100000.0)
+
+
+@dataclass(frozen=True)
 class AnalysisConfig:
     sensor: SensorConfig
     lens: LensConfig
@@ -82,6 +88,7 @@ class AnalysisConfig:
     detection: DetectionConfig
     background: BackgroundConfig
     ugr: UGRConfig
+    report: ReportConfig = ReportConfig()
     source: Path | None = None
 
     def snapshot(self) -> dict[str, Any]:
@@ -147,6 +154,8 @@ def load_analysis_config(path: str | Path | None = None) -> AnalysisConfig:
             threshold_cd_m2=float(d.get("threshold_cd_m2", 500.0)),
             min_pixels=int(d.get("min_pixels", 4)),
             merge_radius_px=int(d.get("merge_radius_px", 3)),
+            sensitivity_cd_m2=tuple(float(x) for x in
+                                    d.get("sensitivity_cd_m2", (250.0, 500.0, 1000.0, 2000.0))),
         ),
         background=BackgroundConfig(
             method=method,
@@ -159,6 +168,8 @@ def load_analysis_config(path: str | Path | None = None) -> AnalysisConfig:
             omega_max_sr=float(u.get("omega_max_sr", 0.1)),
             position_index_cap=float(u.get("position_index_cap", 16.0)),
         ),
+        report=ReportConfig(luminance_scale_cd_m2=tuple(
+            float(x) for x in raw.get("report", {}).get("luminance_scale_cd_m2", (1.0, 1e5)))),
         source=path,
     )
     return cfg

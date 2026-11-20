@@ -1,12 +1,12 @@
 # Camera and processing
 
-Status: 2026-10-13. Covers `hal/camera*.py`, `photometry/`, `analysis/`, `report/heatmap.py`,
+Status: 2026-11-20. Covers `hal/camera*.py`, `photometry/`, `analysis/`, `report/`,
 `pipeline/region.py` and `tools/ugrctl.py`. Measurement model and requirements: `REQUIREMENTS.md`.
 
 ```
 bracket (8 CR2) ─► superpixels ─► Debevec merge ─► × k ─► cd/m² map ─► sources ─► L_b ─► UGR
                                                                          │
-                                       luminance.npy · sources.csv · heatmap.png · result.json
+                                       luminance.npy · sources.csv · images · result.json
 ```
 
 ---
@@ -209,9 +209,16 @@ many positions are over 19 and 22, and the check's UGR difference. Folder layout
 | File | Content |
 |---|---|
 | `luminance.npy` | float32 cd/m², 3000 × 2000 |
-| `sources.csv` | One row per source: L, peak, ω, σ, τ, p, contribution, centroid, flags |
-| `heatmap.png` | Log false-colour luminance, sources outlined and numbered, windows hatched, clipped pixels magenta, UGR and L_b in the title, top sources listed |
-| `result.json` | All of the above plus flags, merge statistics and frame-to-frame ratios, geometry, and the full provenance: frame hashes, capture settings, k, weights, masks, analysis config |
+| `sources.csv` | One row per source: L, median, peak, ω, σ, τ, p, contribution, share, UGR change without it, illuminance at the eye, L/L_b, centroid, flags |
+| `photo.jpg` | The CR2's embedded JPEG of the best-exposed frame (simulator: rendered from luminance) |
+| `luminance.png` | Log false colour on the fixed `[report]` scale, clipped pixels magenta |
+| `contribution.png` | Each source pixel's share of Σ L²ω/p²: where the UGR comes from |
+| `sources.png` | The photo with a box per source (id, name, L, share; dashed if flagged), windows hatched, glazing outlined |
+| `masks.png` | Position-index rings and the exclusion, glazing and luminaire polygons |
+| `result.json` | All of the above plus metrics (percentiles, fraction above threshold, threshold sensitivity), flags, merge statistics and frame-to-frame ratios, geometry, and the full provenance: frame hashes, capture settings, k, weights, masks, analysis config |
+
+Every image is dark and carries the position's UGR, category, position and study in a corner,
+with a warning mark when the result has flags. A study adds `report.xlsx` (`report/excel.py`).
 
 ---
 

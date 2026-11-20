@@ -383,9 +383,11 @@ Three pages, decided 2026-11-19.
 
 **Home: studies** (`/home`, built 2026-11-19 on the simulator: start recording with the session
 sequence, step lights, automatic analysis, per-position cards with the luminance map, study
-summary, library search, results zip, disk space. Not built: camera profile selection (§4.5),
-re-analysis, the raw zip, the comparison view, the shutdown button, and the images of §5.5
-other than the luminance map. Zero and calibration shot are recorded as skipped and flagged
+summary, library search, results zip, disk space; since 2026-11-20 the five images of §5.5
+per card (a switcher picks which), each card's top source and threshold sensitivity, the Excel
+workbook, and re-analysis from the recorded brackets with the previous results kept under
+`previous/`. Not built: camera profile selection (§4.5), the raw zip, the comparison view and
+the shutdown button. Zero and calibration shot are recorded as skipped and flagged
 until optical zeroing and the camera calibration page exist.)
 
 - Select the position profile and the camera profile; set the lighting condition (§3.1), operator
@@ -442,12 +444,14 @@ Every study retains:
 
 - **Raw archive**: original CR2s, so any measurement can be recomputed later with different
   settings
-- **Per-position images**, each stamped in a corner with that position's UGR (camera axis,
+- **Per-position images** (built 2026-11-20, `report/images.py`; the photo from a real CR2's
+  embedded JPEG is untested until real CR2s exist, the simulator's is rendered from luminance),
+  each stamped in a corner with that position's UGR (camera axis,
   labelled as such), category, position and study id, and a ⚠ mark when the result carries flags:
   1. **Photo**: the full-size JPEG embedded in the best-exposed CR2 of the bracket. Illustrative
      only; it carries the camera's own tone curve and white balance
-  2. **Luminance map**: log false colour on a **fixed scale** by default, so the same colour is the
-     same luminance in every study. Auto scale optional
+  2. **Luminance map**: log false colour on a **fixed scale** (`[report]` in analysis.toml,
+     1 to 100 000 cd/m²), so the same colour is the same luminance in every study
   3. **Glare contribution map**: per pixel `L²ω/p²`, showing where the UGR comes from
   4. **Source map**: the photo with a box per source, labelled with id, L and share of the
      position's glare. Direct and reflected sources distinguished; dashed when flagged
@@ -456,8 +460,9 @@ Every study retains:
 - **Forward-gaze map** per study: every counted source in mount angles around the forward gaze,
   with position-index contours, the frame outlines and the uncovered area, stamped with the
   forward-gaze UGR
-- **Excel workbook** (XlsxWriter, BSD, decided 2026-11-19). Sheets: Summary, Positions, Sources,
-  Movement profile, Camera profile, Calibration & QA, Provenance. Contents in §5.6
+- **Excel workbook** (XlsxWriter, BSD, decided 2026-11-19; built 2026-11-20, `report/excel.py`,
+  `report.xlsx` in the study folder, rebuilt by every analysis). Sheets: Summary, Positions,
+  Sources, Movement profile, Camera profile, Calibration & QA, Provenance. Contents in §5.6
 - **CSV**: flat results tables, as now
 - **PDF report**: the images and tables above, the calibration record, the zero drift and all
   parameters
@@ -466,7 +471,11 @@ Every study retains:
 
 ### 5.6 Metrics
 
-Items not yet in the built `sources.csv` / `result.json` are marked *new*.
+Built 2026-11-20 (`analysis/metrics.py`) except where marked *new*: the per-source share, UGR
+change without it, median L, illuminance at the eye and contrast; the per-position percentiles,
+fraction above threshold and threshold sensitivity (thresholds in `[detection]
+sensitivity_cd_m2`). Still *new* (not built): everything about reflections, the forward gaze,
+coverage and aim error.
 
 Per source
 
@@ -537,7 +546,7 @@ can always be rebuilt from them.
 As built (`storage/studies.py`): `studies/<id>/study.json` (settings, steps, positions, results,
 summary, flags, software commit), `profile.toml` and `masks/<position id>.json` frozen at the
 start, so editing a profile later cannot change what a past study measured,
-`brackets/{sweep_NN, NN_<id>, check_<id>}`, `results/<same>/` (`result.json`, `heatmap.png`,
+`brackets/{sweep_NN, NN_<id>, check_<id>}`, `results/<same>/` (`result.json`, the images,
 `sources.csv`, `luminance.npy`) and `background.json`. The SQLite index is `index.sqlite`,
 rebuilt from the folders at every server start. A study left recording or analysing by a server
 that stopped is marked `interrupted` at the next start.
@@ -578,8 +587,9 @@ ugr_rig/
 │                         the session sequence and its analysis queue
 ├── storage/              study folders (the record) + SQLite index (search)  (built)
 │                         exports beyond the results zip                      (planned)
-├── report/               heatmap (built); photo, contribution map, source map, mask overlay,
-│                         corner stamp, forward-gaze map, Excel (XlsxWriter), PDF
+├── report/               images.py: photo, luminance, contribution, sources, masks,
+│                         UGR stamp; excel.py: the study workbook             (built)
+│                         forward-gaze map, PDF                               (planned)
 ├── pipeline/             region.py: one direction end to end (built); study.py: worker-process
 │                         jobs for a study (sweep, regions) and its summary   (built)
 │                         forward gaze, optical zeroing                       (planned)
@@ -623,6 +633,7 @@ sim-tested.
    home page (built 2026-11-19 on the simulator, except optical zeroing and the drift check,
    which need the fiducial centroiding, and the calibration shot, which needs the camera page)
 6. Reflections in detection, the forward-gaze combination, report images and the Excel workbook
+   (images, metrics, Excel and re-analysis built 2026-11-20)
 7. Camera calibration page (lens geometry, `k`), validation of the photometry against the target
    and the handheld meter; PDF report
 
@@ -637,8 +648,6 @@ sim-tested.
   shot with the full 8-frame bracket. §3.3 asks for a short bracket: the sweep only needs the
   background, so the shortest frames could be dropped there. Decide once the real capture time
   per bracket is known; 9 full brackets plus the moves may take several minutes on the body
-- The heatmap figure is white (matplotlib default): too bright for the dark pages and the cab.
-  Restyle it with the report images (§5.5), with a fixed luminance scale
 - Masks are drawn on the live-view reference image and applied to the bracket frames, so live
   view must show the same field as the CR2. Confirm on the body that Canon live view is not
   cropped or offset relative to the raw frame; if it is, store the offset in the camera profile

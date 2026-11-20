@@ -295,6 +295,10 @@ a.button:hover { border-color: #3c4550; }
 .bad { color: var(--bad); }
 .flags { margin: 6px 0; padding-left: 18px; font-size: 13px; color: var(--warn); }
 
+.results-head { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.results-head h2 { margin: 0; }
+.seggroup.views { display: flex; margin: 0; }
+.seggroup.views button { min-height: 36px; padding: 4px 12px; font-size: 14px; }
 .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
 .card { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
 .card.check { border-style: dashed; }

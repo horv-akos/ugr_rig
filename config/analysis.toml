@@ -42,6 +42,12 @@ luminance_weights = "matrix"    # "matrix": Y row of the camera's colour matrix 
 threshold_cd_m2 = 500.0         # absolute, recorded with every result
 min_pixels = 4                  # smaller blobs are hot pixels or noise
 merge_radius_px = 3             # blobs closer than this are one luminaire (LED arrays)
+sensitivity_cd_m2 = [250.0, 500.0, 1000.0, 2000.0]   # UGR is also reported at these thresholds,
+                                # to show how much the number hangs on the threshold choice
+
+[report]
+luminance_scale_cd_m2 = [1.0, 100000.0]   # fixed colour scale of every luminance map, so one
+                                # colour is one luminance in every study
 
 [background]
 method = "frame"                # "frame": solid-angle-weighted mean of the non-source pixels of

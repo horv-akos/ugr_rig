@@ -263,6 +263,11 @@ def create_app(rig: RigController) -> FastAPI:
     def get_study(sid: str) -> dict[str, Any]:
         return rig.study(sid)
 
+    @app.post("/api/studies/{sid}/reanalyse")
+    def reanalyse(sid: str) -> dict[str, Any]:
+        """Analyse the recorded brackets again; the previous results go to previous/."""
+        return rig.reanalyse(sid)
+
     @app.get("/api/studies/{sid}/files/{path:path}")
     def study_file(sid: str, path: str) -> FileResponse:
         return FileResponse(rig.studies.file(sid, path))

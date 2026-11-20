@@ -65,7 +65,7 @@ ugr_rig/
 ├── service/      owns the mount and camera: motions, jog heartbeat, positions, live view (built)
 │                 · camera, session sequence, job queue (planned)
 ├── storage/      data directory, profiles, SQLite index, study archive, exports
-├── report/       heatmap (built) · photo, maps, source boxes, masks, stamp, Excel, PDF
+├── report/       images (photo, maps, boxes, masks, UGR stamp) · Excel (built) · PDF
 ├── pipeline/     region (built) · study, optical zeroing, recovery
 ├── tests/        pytest: camera control flow against a fake libgphoto2, synthetic end to end
 └── web/          FastAPI: HTTP API, live view, movement and home pages (built) · camera page
@@ -110,14 +110,14 @@ where to point the laptop's browser. Bound to 127.0.0.1 over SSH it says how to 
 | `hal/` mount: config, motion, pigpio/sim backends, `mountctl` | **Built**, sim-tested; not yet on hardware |
 | `hal/tmc2209.py` — UART driver config, `mountctl drivers` | **Built**, tested against a simulated bus; not yet on the drivers |
 | Pi deployment: systemd units, UART, WiFi access point (`deploy/`) | Written; not yet tried on the Pi |
-| `photometry` + `analysis` + heatmap, `pipeline/region.py`, `ugrctl` | **Built**, validated on synthetic brackets; needs real CR2s, the target and the meter |
+| `photometry` + `analysis` + metrics, `pipeline/region.py`, `ugrctl` | **Built**, validated on synthetic brackets; needs real CR2s, the target and the meter |
 | `hal/camera.py` — gphoto2 against the 2000D; this is where the surprises live | **Built**, tested against a fake libgphoto2; not yet on the body |
 | Live view (camera preview), MJPEG stream | **Built**; simulated cab on the desk; gphoto2 preview tested against a fake libgphoto2 only, confirm on the body |
 | Jog, nudge, speed and controlled stop in `hal/mount.py`; `service/` + HTTP API; `rigctl` | **Built**, sim-tested; not yet on hardware |
 | Measure the built head (`docs/PIVOT_DETAIL.md` §8) | After assembly |
 | `storage` + session sequence + analysis worker (`service/study.py`, `pipeline/study.py`) | **Built**, sim-tested; optical zero, drift check and calibration shot recorded as skipped |
 | Reflections in detection, forward-gaze combination | Not started |
-| `report`: photo, contribution map, source map, masks, stamp, Excel, PDF | Heatmap built; rest not started |
+| `report`: photo, contribution map, source map, masks, UGR stamp, Excel; re-analysis | **Built**, sim-tested; CR2 photo untested; PDF not started |
 | `web`: movement calibration page, reference images, mask editor | **Built**, sim-tested; tiling, coverage map and aim check to come |
 | `web`: home page (start a study, steps, results, library, zip) | **Built**, sim-tested |
 | `web`: camera calibration page | Not started |

@@ -226,6 +226,26 @@ class RigController:
         threading.Thread(target=run.analyse, name=f"analysis-{sid}", daemon=True).start()
         return motion, sid
 
+    def reanalyse(self, study_id: str) -> dict[str, Any]:
+        """Analyse a finished study again from its own brackets: after calibrating k, or
+        after a change to the analysis. The previous results are kept under previous/."""
+        run = self._runs.get(study_id)
+        if run is not None and run.analysing.is_set():
+            raise RigError(f"{study_id} is still {run.study['status']}")
+        record = self.studies.load(study_id)
+        if record.get("status") in ("recording", "analysing"):
+            raise RigError(f"{study_id} is {record['status']}")
+        entries = record["positions"] + ([record["check"]] if record.get("check") else [])
+        if not any(e.get("bracket") for e in entries):
+            raise RigError(f"{study_id} has no recorded brackets to analyse")
+        if not self.processing_setup()[0]:
+            raise RigError("no calibration constant k: calibrate first, then re-analyse")
+        run = StudyRun(self, record)
+        run.prepare_reanalysis()
+        self._runs[study_id] = run
+        threading.Thread(target=run.analyse, name=f"reanalysis-{study_id}", daemon=True).start()
+        return run.study
+
     def study(self, study_id: str) -> dict[str, Any]:
         run = self._runs.get(study_id)
         return dict(run.study) if run is not None else self.studies.load(study_id)

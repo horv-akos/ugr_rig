@@ -1,7 +1,7 @@
 """One region (direction) end to end, from a bracket directory on disk:
 
     bracket -> linearise -> Debevec-weighted merge -> cd/m2 -> sources -> L_b -> UGR
-            -> luminance.npy, result.json, sources.csv, heatmap.png
+            -> luminance.npy, result.json, sources.csv, and the images of report.images
 
 Runs the same on the Pi straight after capture and on a desk against an
 archived bracket, which is how most iterations will happen.
@@ -19,7 +19,7 @@ from typing import Any
 
 import numpy as np
 
-from analysis import background, detection, ugr as ugr_mod
+from analysis import background, detection, metrics, ugr as ugr_mod
 from hal.camera import BracketManifest
 from photometry import calibration, hdr, linearise
 from photometry.masks import CameraGeometry, camera_to_view
@@ -98,6 +98,7 @@ class RegionResult:
     detection_info: dict[str, Any] = field(default_factory=dict)
     geometry: dict[str, Any] = field(default_factory=dict)
     provenance: dict[str, Any] = field(default_factory=dict)
+    metrics: dict[str, Any] = field(default_factory=dict)
     outputs: dict[str, str] = field(default_factory=dict)
     timing_s: dict[str, float] = field(default_factory=dict)
 
@@ -113,9 +114,10 @@ class RegionResult:
 def evaluate_region(bracket_dir: str | Path, out_dir: str | Path, cfg: AnalysisConfig,
                     masks: detection.RegionMasks | None = None,
                     lb: dict[str, Any] | None = None, k: float | None = None,
-                    name: str | None = None, heatmap: bool = True) -> RegionResult:
+                    name: str | None = None, images: bool = True,
+                    study: str | None = None) -> RegionResult:
     """`lb`: session background from a sweep (`background_from_sweep`), or None for
-    the provisional frame mean."""
+    the provisional frame mean. `study` only labels the images' stamp."""
     t0 = time.monotonic()
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -145,6 +147,13 @@ def evaluate_region(bracket_dir: str | Path, out_dir: str | Path, cfg: AnalysisC
     ugr_mod.rate_sources(sources, R, cfg.ugr.omega_min_sr, cfg.ugr.omega_max_sr,
                          cfg.ugr.position_index_cap)
     value = ugr_mod.ugr(sources, L_b)
+    metrics.rate_extras(sources, L_b)
+    pos_metrics = metrics.position_metrics(L, geom.solid_angle, exclude,
+                                           cfg.detection.threshold_cd_m2, sources)
+    pos_metrics["threshold_sensitivity"] = metrics.threshold_sensitivity(
+        L, merged.hdr.clipped, geom, masks, cfg.detection.sensitivity_cd_m2,
+        cfg.detection.min_pixels, cfg.detection.merge_radius_px, cfg.calibration.factor, R,
+        cfg.ugr, L_b)
 
     flags = []
     if lb_info.get("provisional"):
@@ -170,7 +179,7 @@ def evaluate_region(bracket_dir: str | Path, out_dir: str | Path, cfg: AnalysisC
     result = RegionResult(
         name=name, pan_deg=pan, tilt_deg=tilt, ugr=value, category=ugr_mod.category(value),
         L_b=L_b, background=lb_info, sources=sources, flags=flags, hdr_stats=st,
-        detection_info=det_info, geometry=geom.summary(),
+        detection_info=det_info, geometry=geom.summary(), metrics=pos_metrics,
         provenance={
             "bracket_dir": str(bracket_dir),
             "frames": [{"file": f.file, "shutter": f.shutter_label, "t_s": f.t_effective_s,
@@ -192,18 +201,17 @@ def evaluate_region(bracket_dir: str | Path, out_dir: str | Path, cfg: AnalysisC
     write_sources_csv(out / "sources.csv", sources)
     result.outputs["sources"] = "sources.csv"
     t_analysis = time.monotonic() - t0 - t_merge
-    if heatmap:
-        from report.heatmap import render_heatmap
+    if images:
+        from report import images as report_images
 
-        u = "n/a" if value is None else f"{value:.1f}"
-        render_heatmap(
-            out / "heatmap.png", L, labels, sources, exclude, merged.hdr.clipped,
-            title=f"{name}   UGR {u}  ({result.category})",
-            subtitle=(f"pan {pan:+.1f}°  tilt {tilt:+.1f}°   L_b {L_b:.2f} cd/m² "
-                      f"({lb_info['method']})   threshold {cfg.detection.threshold_cd_m2:g} cd/m²"
-                      f"   {len(sources)} source(s)"
-                      + ("   clipped px in magenta" if st["clipped_px"] else "")))
-        result.outputs["heatmap"] = "heatmap.png"
+        photo = report_images.photo_from_bracket(Path(bracket_dir), merged.manifest.frames,
+                                                 pos_metrics["L50_cd_m2"], k_used)
+        result.outputs.update(report_images.render_all(
+            out, L, labels, sources, masks, exclude, merged.hdr.clipped, geom, R,
+            stamp={"ugr": value, "category": result.category, "position": name,
+                   "study": study, "n_flags": len(flags)},
+            scale=cfg.report.luminance_scale_cd_m2, photo=photo,
+            p_cap=cfg.ugr.position_index_cap))
     result.timing_s = {"merge": t_merge, "analysis": t_analysis,
                        "total": time.monotonic() - t0}
     (out / "result.json").write_text(json.dumps(result.as_dict(), indent=2, default=_json))
@@ -213,7 +221,8 @@ def evaluate_region(bracket_dir: str | Path, out_dir: str | Path, cfg: AnalysisC
 def write_sources_csv(path: Path, sources) -> None:
     cols = ["id", "name", "kind", "source_type", "L_cd_m2", "L_peak_cd_m2", "omega_sr",
             "sigma_deg", "tau_deg", "p", "contribution", "n_px", "centroid_x", "centroid_y",
-            "clipped_fraction", "spectral_factor", "flags"]
+            "clipped_fraction", "spectral_factor", "L_median_cd_m2", "share", "delta_ugr",
+            "e_eye_lx", "contrast", "flags"]
     with open(path, "w", newline="") as fh:
         wr = csv.writer(fh)
         wr.writerow(cols)
@@ -222,7 +231,10 @@ def write_sources_csv(path: Path, sources) -> None:
                          f"{s.L_peak_cd_m2:.6g}", f"{s.omega_sr:.6g}", f"{s.sigma_deg:.3f}",
                          f"{s.tau_deg:.3f}", f"{s.p:.4f}", f"{s.contribution:.6g}", s.n_px,
                          f"{s.centroid_px[0]:.1f}", f"{s.centroid_px[1]:.1f}",
-                         f"{s.clipped_fraction:.4f}", s.spectral_factor, "; ".join(s.flags)])
+                         f"{s.clipped_fraction:.4f}", s.spectral_factor,
+                         f"{s.L_median_cd_m2:.6g}", f"{s.share:.4f}",
+                         "" if s.delta_ugr is None else f"{s.delta_ugr:.3f}",
+                         f"{s.e_eye_lx:.4g}", f"{s.contrast:.4g}", "; ".join(s.flags)])
 
 
 def _json(o):

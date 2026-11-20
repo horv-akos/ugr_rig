@@ -5,7 +5,8 @@ one, so they cross a process boundary unchanged: processing a bracket takes seco
 on the Pi 4, and run in the server process it would stall live view and the jog heartbeat.
 
     process_sweep(job)   hemisphere sweep brackets -> E_ind, L_b (background.json)
-    process_region(job)  one bracket -> UGR, sources, heatmap (result.json in its own folder)
+    process_region(job)  one bracket -> UGR, sources, metrics, images (result.json in its folder)
+    write_report(job)    the study folder -> report.xlsx
     summarise(study)     per-position results -> the study's summary numbers
 
 `overrides` adjust the analysis config for one study without touching config/analysis.toml:
@@ -51,7 +52,8 @@ def process_region(job: dict[str, Any]) -> dict[str, Any]:
     cfg = config(job.get("overrides"))
     masks = detection.RegionMasks.load(job.get("masks"))
     res = region.evaluate_region(job["bracket"], job["out"], cfg, masks=masks,
-                                 lb=job.get("lb"), k=job["k"], name=job["name"])
+                                 lb=job.get("lb"), k=job["k"], name=job["name"],
+                                 study=job.get("study"))
     sources = sorted(res.sources, key=lambda s: -s.contribution)
     return {
         "ugr": res.ugr,
@@ -63,11 +65,20 @@ def process_region(job: dict[str, Any]) -> dict[str, Any]:
         "sources": [{"name": s.name, "kind": s.kind, "type": s.source_type,
                      "L_cd_m2": s.L_cd_m2, "L_peak_cd_m2": s.L_peak_cd_m2,
                      "omega_sr": s.omega_sr, "p": s.p, "contribution": s.contribution,
+                     "share": s.share, "delta_ugr": s.delta_ugr, "e_eye_lx": s.e_eye_lx,
+                     "contrast": s.contrast, "L_median_cd_m2": s.L_median_cd_m2,
                      "flags": s.flags} for s in sources],
         "outputs": dict(res.outputs),
         "timing_s": res.timing_s,
+        "metrics": res.metrics,
         "masks_version": masks.version or None,
     }
+
+
+def write_report(job: dict[str, Any]) -> str:
+    from report import excel
+
+    return str(excel.write(job["dir"], job["study"]))
 
 
 def summarise(study: dict[str, Any]) -> dict[str, Any]:

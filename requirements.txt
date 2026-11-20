@@ -14,6 +14,9 @@ pigpio; platform_machine == "aarch64" or platform_machine == "armv7l"
 # TMC2209 configuration over the Pi UART (hal/tmc2209.py). BSD
 pyserial>=3.5; platform_machine == "aarch64" or platform_machine == "armv7l"
 
+# Excel workbook of a study (report/excel.py). BSD
+XlsxWriter>=3.0
+
 # Rig server (python -m web): HTTP API over the controller. MIT / BSD
 fastapi>=0.110
 uvicorn>=0.29

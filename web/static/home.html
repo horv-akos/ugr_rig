@@ -56,13 +56,18 @@
       <ul id="study-flags" class="flags"></ul>
       <div class="row">
         <button id="stop" class="stop" hidden>STOP recording</button>
-        <a id="zip" class="button" download>Download results (.zip)</a>
+        <a id="excel" class="button" download hidden>Excel workbook</a>
+        <a id="zip" class="button" download>Results (.zip)</a>
+        <button id="reanalyse" class="quiet" hidden>Re-analyse</button>
       </div>
     </div>
   </section>
 
   <section class="panel results-panel" aria-label="Results">
-    <h2>Results</h2>
+    <div class="results-head">
+      <h2>Results</h2>
+      <div id="views" class="seggroup views" role="group" aria-label="Picture shown"></div>
+    </div>
     <div id="cards" class="cards"></div>
   </section>
 

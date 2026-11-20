@@ -299,7 +299,8 @@ def cmd_selftest(args) -> int:
         check("UGR within 0.3", abs(ugr_mine - ugr_true) < 0.3,
               f"{ugr_mine:.2f} vs {ugr_true:.2f} (clipped LED left out of both)")
         check("outputs written", all((tmp / "out" / f).exists()
-                                     for f in ("heatmap.png", "result.json", "sources.csv")))
+                                     for f in ("luminance.png", "sources.png", "photo.jpg",
+                                               "result.json", "sources.csv")))
         ratios = [p["ratio"] for p in res.hdr_stats["pair_ratios"] if p["ratio"]]
         check("apex shutter model: frame steps consistent",
               all(abs(r - 1) < 0.01 for r in ratios), " ".join(f"{r:.3f}" for r in ratios))
@@ -375,7 +376,7 @@ def main(argv=None) -> int:
     region_args(s)
     s.set_defaults(fn=cmd_simulate)
 
-    pr = sub.add_parser("process", help="bracket directory -> UGR, sources, heatmap")
+    pr = sub.add_parser("process", help="bracket directory -> UGR, sources, metrics, images")
     pr.add_argument("bracket")
     pr.add_argument("--out", help="default <bracket>/result")
     pr.add_argument("--name")

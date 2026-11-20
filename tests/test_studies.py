@@ -130,7 +130,7 @@ def test_study_end_to_end(tmp_path):
         assert st["software"]["commit"] and st["processing"]["k"] > 0
         d = rig.studies.path(sid)
         assert (d / "profile.toml").is_file() and (d / "background.json").is_file()
-        assert (d / dash["result"]["outputs"]["heatmap"]).is_file()
+        assert (d / dash["result"]["outputs"]["sources_map"]).is_file()
         result = json.loads((d / dash["result"]["dir"] / "result.json").read_text())
         assert result["provenance"]["analysis_config"]["sensor"]["pixel_pitch_um"] > 3.72
         assert rig.list_studies("op")[0]["id"] == sid
@@ -194,11 +194,35 @@ def test_study_api(tmp_path):
         st = finish(rig, sid)
         assert c.get(f"/api/studies/{sid}").json()["status"] == "done"
         assert c.get("/api/studies").json()[0]["id"] == sid
-        heat = st["positions"][0]["result"]["outputs"]["heatmap"]
+        heat = st["positions"][0]["result"]["outputs"]["sources_map"]
         assert c.get(f"/api/studies/{sid}/files/{heat}").headers["content-type"] == "image/png"
         assert c.get(f"/api/studies/{sid}/files/..%2F..%2Fstate.json").status_code == 404
         assert c.get("/api/studies/nope").status_code == 404
         z = c.get(f"/api/studies/{sid}/results.zip")
         assert z.headers["content-type"] == "application/zip" and len(z.content) > 1000
+    finally:
+        rig.close()
+
+
+def test_reanalysis_keeps_the_previous_results(tmp_path):
+    rig = make_rig(tmp_path)
+    try:
+        m, sid = rig.start_study("cab", "dark", sweep=False, check=False)
+        rig.wait(m)
+        first = finish(rig, sid)
+        assert first["outputs"]["excel"] == "report.xlsx"
+        assert (rig.studies.path(sid) / "report.xlsx").is_file()
+        ugr0 = first["positions"][0]["result"]["ugr"]
+        rig.reanalyse(sid)
+        with pytest.raises(Exception, match="still"):
+            rig.reanalyse(sid)                        # one analysis at a time
+        st = finish(rig, sid)
+        assert st["status"] == "done" and len(st["analyses"]) == 1
+        prev = rig.studies.path(sid) / st["analyses"][0]["previous"]
+        assert (prev / "results").is_dir() and (prev / "report.xlsx").is_file()
+        assert st["analyses"][0]["summary"]["ugr_max"] is not None
+        assert st["positions"][0]["result"]["ugr"] == pytest.approx(ugr0)
+        names = zipfile.ZipFile(BytesIO(rig.studies.results_zip(sid))).namelist()
+        assert not any("/previous/" in n for n in names)
     finally:
         rig.close()
