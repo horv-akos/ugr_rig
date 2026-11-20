@@ -54,7 +54,7 @@ Every parameter that touched a result is stored with it, so any number can be re
 ```
 ugr_rig/
 ├── hal/          mount: config · motion · backend · mount, incl. jog and controlled stop (built)
-│                 · tmc2209 (UART, next)
+│                 · tmc2209 (UART driver config, built)
 │                 camera: camera_config · camera (gphoto2, incl. live view) · camera_sim (built)
 ├── config/       mount.toml · camera.toml · analysis.toml — rig constants, and the template
 │                 for camera profiles
@@ -108,7 +108,8 @@ where to point the laptop's browser. Bound to 127.0.0.1 over SSH it says how to 
 | Step | Status |
 |---|---|
 | `hal/` mount: config, motion, pigpio/sim backends, `mountctl` | **Built**, sim-tested; not yet on hardware |
-| `hal/tmc2209.py` — UART driver config | Next |
+| `hal/tmc2209.py` — UART driver config, `mountctl drivers` | **Built**, tested against a simulated bus; not yet on the drivers |
+| Pi deployment: systemd units, UART, WiFi access point (`deploy/`) | Written; not yet tried on the Pi |
 | `photometry` + `analysis` + heatmap, `pipeline/region.py`, `ugrctl` | **Built**, validated on synthetic brackets; needs real CR2s, the target and the meter |
 | `hal/camera.py` — gphoto2 against the 2000D; this is where the surprises live | **Built**, tested against a fake libgphoto2; not yet on the body |
 | Live view (camera preview), MJPEG stream | **Built**; simulated cab on the desk; gphoto2 preview tested against a fake libgphoto2 only, confirm on the body |
@@ -149,8 +150,10 @@ positions cover (`REQUIREMENTS.md` §3.6).
 
 ## Open blockers
 
-1. **Camera on the bench** — `ugrctl camera info`, one bracket and live view on the real 2000D:
+1. **Drivers on the bench** — `mountctl drivers` with the motor rail on must end in
+   `verified` before the real head moves (`deploy/README.md` §5).
+2. **Camera on the bench** — `ugrctl camera info`, one bracket and live view on the real 2000D:
    which config names it exposes, which are writable, whether the EXIF check passes, and whether
    preview works over gphoto2.
-2. **Lab access to a calibrated luminance meter** — decides ~€550–1100 of the calibration budget.
-3. **Lens constants** — focal length, distortion and vignetting of the 18–55 at 18 mm, f/8.
+3. **Lab access to a calibrated luminance meter** — decides ~€550–1100 of the calibration budget.
+4. **Lens constants** — focal length, distortion and vignetting of the 18–55 at 18 mm, f/8.

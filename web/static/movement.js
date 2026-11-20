@@ -76,6 +76,14 @@ function render() {
       : pill("no zero", "bad", `jog or nudge to the fiducial, then set zero (moves are capped at ${st.unzeroed_jog_deg}° until then)`),
   ];
   if (zeroed && !st.certain) pills.push(pill("position uncertain: re-zero", "bad"));
+  const drv = st.drivers;
+  if (on && drv && drv.configured) {
+    const ax = Object.values(drv.axes || {});
+    pills.push(pill("UART verified", "ok", ax.map((a) =>
+      `address ${a.address}: 1/${a.microsteps}, run ${a.run_current_a} A, hold ${a.hold_current_a} A`).join("
+")));
+  }
+  for (const w of (drv && drv.warnings) || []) pills.push(pill(w, "warn"));
   const lash = Object.entries(st.backlash_ok || {}).filter(([, ok]) => !ok).map(([a]) => a);
   if (zeroed && lash.length) pills.push(pill(`backlash: ${lash.join(", ")}`, "warn",
     "Last move on this axis went against the approach direction. Saving takes it up first."));

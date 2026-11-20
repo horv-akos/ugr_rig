@@ -10,9 +10,11 @@ Once the socket is bound it prints the URLs it can be opened on (with --host 0.0
 network interface, the SSH address first), so a headless Pi tells you where to point the
 laptop's browser. -v also turns on uvicorn's request log.
 
-On the Pi pigpiod must be running (hal/README.md). Until hal/tmc2209.py configures the
-drivers over UART, PAN runs 1/8 and TILT 1/32 microstepping, so do not move the real head
-with this yet.
+On the Pi pigpiod must be running and the UART enabled (deploy/README.md). Enabling the
+drivers first configures both TMC2209s over UART and reads them back; without that they would
+run PAN 1/8 and TILT 1/32 microstepping, so enabling refuses if it cannot be verified. That
+path is tested against a simulated bus only: run `python -m tools.mountctl drivers` on the Pi,
+motor rail on, before the first move.
 """
 
 from __future__ import annotations
@@ -99,8 +101,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.camera is None:
         args.camera = "sim" if args.backend == "sim" else "gphoto2"
     if args.backend == "pigpio":
-        log.warning("pigpio backend: hal/tmc2209.py does not exist yet, so the drivers are "
-                    "not configured (PAN 1/8, TILT 1/32 microstepping). Do not move the real head.")
+        log.warning("pigpio backend: the TMC2209 UART setup is only tested against a "
+                    "simulator. Before the first move run `python -m tools.mountctl drivers`.")
     rig = RigController.from_config(args.backend, args.data, args.config, camera=args.camera,
                                     **kwargs)
     try:

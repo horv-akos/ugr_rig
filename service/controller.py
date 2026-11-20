@@ -148,8 +148,14 @@ class RigController:
                              view=CabView(fov), bracket_view=CabView(fov, size=(450, 300)))
         elif camera != "none":
             raise ValueError(f"unknown camera {camera!r}: gphoto2, sim or none")
+        from hal.tmc2209 import create_drivers
+
+        # Real hardware always gets the UART; the simulator gets a simulated driver pair, so
+        # the configure-and-verify path runs on every desk start too.
+        drivers = create_drivers("uart" if backend == "pigpio" else "sim", cfg.drivers,
+                                 (cfg.pan, cfg.tilt))
         live = LiveView(cam, camera)
-        return cls(PanTiltMount(cfg, pulses), data_dir, live, geometry)
+        return cls(PanTiltMount(cfg, pulses, drivers), data_dir, live, geometry)
 
     def close(self) -> None:
         """Stop the watchdog and live view, cut any motion and release the drivers."""

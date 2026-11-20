@@ -51,6 +51,9 @@ class AxisConfig:
     invert: bool
     motor_steps_per_rev: int
     microsteps: int
+    uart_address: int = 0       # TMC2209 address, set by the MS1/MS2 straps
+    run_current_a: float = 0.6  # RMS, set over UART
+    hold_current_a: float = 0.3
 
     @property
     def steps_per_deg(self) -> float:
@@ -79,6 +82,21 @@ class AxisConfig:
             raise ValueError(f"{self.name}: approach_sign must be +1 or -1")
         if self.backlash_deg < 0:
             raise ValueError(f"{self.name}: backlash_deg cannot be negative")
+        if self.uart_address not in (0, 1, 2, 3):
+            raise ValueError(f"{self.name}: uart_address must be 0..3")
+        if not 0 < self.hold_current_a <= self.run_current_a:
+            raise ValueError(f"{self.name}: need 0 < hold_current_a <= run_current_a")
+
+
+@dataclass(frozen=True)
+class DriversConfig:
+    """The TMC2209s' shared UART (docs/CONNECTIONS.md §6)."""
+
+    port: str = "/dev/serial0"
+    baud: int = 115200
+    rsense_ohm: float = 0.11       # sense resistors on the driver board
+    hold_delay: int = 8            # IHOLDDELAY 0..15: how gently current drops to hold
+    timeout_s: float = 0.05
 
 
 @dataclass(frozen=True)
@@ -91,6 +109,7 @@ class MountConfig:
     enable_settle_ms: int
     dir_setup_us: int
     unzeroed_jog_deg: float = 15.0  # longest single jog/nudge before a datum exists
+    drivers: DriversConfig = DriversConfig()
     source: Path | None = None
 
     def axis(self, name: str) -> AxisConfig:
@@ -154,10 +173,23 @@ def load_config(path: str | Path | None = None) -> MountConfig:
             invert=bool(section.get("invert", False)),
             motor_steps_per_rev=motor_steps,
             microsteps=microsteps,
+            uart_address=int(section.get("uart_address", 0 if name == "pan" else 1)),
+            run_current_a=float(section.get("run_current_a", 0.6)),
+            hold_current_a=float(section.get("hold_current_a", 0.3)),
         )
         cfg.validate()
         return cfg
 
+    d = raw.get("drivers", {})
+    drivers = DriversConfig(
+        port=str(d.get("port", "/dev/serial0")),
+        baud=int(d.get("baud", 115200)),
+        rsense_ohm=_positive(d.get("rsense_ohm", 0.11), "drivers.rsense_ohm"),
+        hold_delay=int(d.get("hold_delay", 8)),
+        timeout_s=_positive(d.get("timeout_s", 0.05), "drivers.timeout_s"),
+    )
+    if not 0 <= drivers.hold_delay <= 15:
+        raise ValueError("drivers.hold_delay must be 0..15")
     pins = Pins(**raw["pins"])
     return MountConfig(
         pins=pins,
@@ -168,6 +200,7 @@ def load_config(path: str | Path | None = None) -> MountConfig:
         enable_settle_ms=int(mount.get("enable_settle_ms", 50)),
         dir_setup_us=int(mount.get("dir_setup_us", 100)),
         unzeroed_jog_deg=_positive(mount.get("unzeroed_jog_deg", 15.0), "unzeroed_jog_deg"),
+        drivers=drivers,
         source=path,
     )
 

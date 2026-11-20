@@ -45,7 +45,8 @@ hal/         ONLY layer that touches hardware
                                              jog, nudge, speed, stop() ramp-down, backlash state
   camera_config.py camera.py camera_sim.py   2000D over python-gphoto2 + FakeCamera;
                                              preview()/end_preview() live view, CabView sim
-  tmc2209.py                                 NOT WRITTEN YET - next hardware task
+  tmc2209.py                                 TMC2209 config over UART + SimTmcBus; configure()
+                                             before ENABLE, check() before every move
 photometry/  profile (analysis.toml) · linearise (CR2 -> superpixels) · hdr (Debevec merge)
              · calibration (k) · masks (pixel direction/solid angle, Guth/Iwata position index)
 analysis/    detection (ROIs, threshold blobs) · background (L_b) · ugr
@@ -66,6 +67,7 @@ web/         api.py: FastAPI over service/ (/api/...); __main__.py runs it (`pyt
              no build step, no CDN.
              home.html/js: start a study, steps, results, library. Camera page not started
 config/      mount.toml · camera.toml · analysis.toml (also the template for camera profiles)
+deploy/      systemd units (pigpiod, ugr-rig) + Pi setup notes, untried on the Pi
 tools/       mountctl.py (head bench CLI) · ugrctl.py (camera + processing CLI)
              · rigctl.py (HTTP client of the rig server, stdlib only)
 tests/       pytest
@@ -90,8 +92,10 @@ talks to hardware, so it is always testable on a desk against stored brackets.
 - **The service owns the hardware.** Only `service/` holds a mount or camera between requests;
   `web/` and `rigctl` go through its API and never import `hal`. The head is open-loop, so a
   process that exits loses its position, and only one process can hold the camera's USB session.
-- **Do not move the real head** until `hal/tmc2209.py` exists and verifies the driver config over
-  UART. Without it, PAN runs 1/8 and TILT 1/32 microstepping.
+- **Do not move the real head** until `mountctl drivers` has verified the driver config over
+  UART on the bench (`deploy/README.md` §5). Without it, PAN runs 1/8 and TILT 1/32
+  microstepping. `PanTiltMount.enable()` configures and verifies first, and refuses on real
+  hardware without a driver bus; the UART path is so far tested against `SimTmcBus` only.
 - **Pi 4 only.** pigpio has no Pi 5 support.
 - **Provenance:** anything that can change a number (threshold, k, lens constants, masks version,
   frame hashes) goes into `result.json`. New parameters go into `AnalysisConfig.snapshot()`
@@ -169,7 +173,8 @@ feed, motor control service with hold-to-move jog and position profiles, three w
 windscreen reflections, forward-gaze study rating, report images, metrics, Excel.
 
 Next, roughly in order (`REQUIREMENTS.md` §8): camera on the body (`camera info`, one bracket,
-live view); `hal/tmc2209.py`; at the desk meanwhile, report images (photo, contribution and
+live view); `mountctl drivers` on the bench, then the head measurements; Pi setup per
+`deploy/README.md`; at the desk meanwhile, report images (photo, contribution and
 source maps, stamp, dark-friendly heatmap) + Excel; reflections; forward gaze (with the tiling and
 coverage map); camera calibration page (k, then the calibration shot in the sequence); optical
 zeroing + drift check; PDF. Open items list: `REQUIREMENTS.md` §9.

@@ -31,6 +31,7 @@ from hal.backend import SimBackend, create_backend  # noqa: E402
 from hal.config import load_config  # noqa: E402
 from hal.motion import AxisPlan, build_chunks, plan_timeline, step_times  # noqa: E402
 from hal.mount import CHUNK_US, PanTiltMount, install_signal_handlers  # noqa: E402
+from hal import tmc2209  # noqa: E402
 
 LOG_DIR = Path("measurements")
 
@@ -45,7 +46,9 @@ def open_mount(args) -> PanTiltMount:
     kwargs = {}
     if args.backend == "sim":
         kwargs["time_scale"] = args.time_scale
-    mount = PanTiltMount(cfg, create_backend(args.backend, **kwargs))
+    drivers = tmc2209.create_drivers("uart" if args.backend == "pigpio" else "sim",
+                                     cfg.drivers, (cfg.pan, cfg.tilt))
+    mount = PanTiltMount(cfg, create_backend(args.backend, **kwargs), drivers)
     install_signal_handlers(mount)
     return mount
 
@@ -112,6 +115,32 @@ def cmd_info(args) -> int:
         f"{events[-1][0]:.1f} s, {len(chunks)} chained waves of at most {CHUNK_US / 1000:g} ms"
     )
     print(f"jog or nudge before a zero is set: at most {cfg.unzeroed_jog_deg:g} deg at a time")
+    return 0
+
+
+def cmd_drivers(args) -> int:
+    """Configure both TMC2209s over UART, read them back, and print what they hold. The
+    drivers stay disabled. First thing to run after wiring, with the motor rail on."""
+    cfg = load_config(args.config)
+    bus = tmc2209.create_drivers("uart" if args.backend == "pigpio" else "sim",
+                                 cfg.drivers, (cfg.pan, cfg.tilt))
+    try:
+        report = bus.configure()
+        warnings = bus.check()
+    except tmc2209.DriverError as exc:
+        print(f"FAILED: {exc}")
+        return 1
+    finally:
+        bus.close()
+    print(f"port {cfg.drivers.port} at {cfg.drivers.baud} baud, Rsense {cfg.drivers.rsense_ohm} ohm")
+    for name, r in report.items():
+        print(f"  {name:5s} address {r['address']}  1/{r['microsteps']}  "
+              f"run {r['run_current_a']:.3f} A (IRUN {r['irun']})  "
+              f"hold {r['hold_current_a']:.3f} A (IHOLD {r['ihold']})  vsense {r['vsense']}  "
+              f"GCONF {r['gconf']}  CHOPCONF {r['chopconf']}")
+    for w in warnings:
+        print(f"  warning: {w}")
+    print("verified: written, read back, write counter matches")
     return 0
 
 
@@ -456,6 +485,54 @@ def cmd_selftest(args) -> int:
         check("every emitted step accounted for",
               steps == sim4.rising_edges.get(cfg.pins.pan_step, 0), f"{steps} steps")
 
+    print("drivers (TMC2209 over UART, simulated bus)")
+    check("CRC matches the datasheet example (read GCONF, address 0)",
+          tmc2209.read_datagram(0, tmc2209.GCONF).hex() == "05000048")
+    bus = tmc2209.create_drivers("sim", cfg.drivers, (cfg.pan, cfg.tilt))
+    sim_bus = bus.port
+    check("unconfigured drivers run the strap microstepping",
+          [d.microsteps for d in sim_bus.drivers.values()] == [8, 32])
+    report = bus.configure()
+    check("configured: both at the configured microstepping",
+          all(d.microsteps == cfg.pan.microsteps for d in sim_bus.drivers.values()),
+          f"1/{cfg.pan.microsteps}")
+    check("run current within a step of the request",
+          abs(report["pan"]["run_current_a"] - cfg.pan.run_current_a) < 0.04,
+          f"{report['pan']['run_current_a']} A for {cfg.pan.run_current_a} A")
+    with PanTiltMount(cfg, SimBackend(), bus) as mount:
+        mount.enable()
+        mount.set_zero()
+        mount.move_to(2.0, 0.0, settle=False)
+        sim_bus.power_cycle()                     # motor rail switched off and on
+        try:
+            mount.move_to(0.0, 0.0, settle=False)
+            check("rail cycle caught before the next move", False)
+        except tmc2209.DriverReset:
+            check("rail cycle caught before the next move", True)
+        check("position marked uncertain after a reset", not mount.position_certain)
+        check("drivers reconfigured after the reset",
+              all(d.microsteps == cfg.pan.microsteps for d in sim_bus.drivers.values()))
+    silent = tmc2209.create_drivers("sim", cfg.drivers, (cfg.pan, cfg.tilt))
+    silent.port.vmot = False
+    m2 = PanTiltMount(cfg, SimBackend(), silent)
+    try:
+        m2.enable()
+        check("motor rail off: enable refused", False)
+    except tmc2209.DriverNoAnswer:
+        check("motor rail off: enable refused", not m2.enabled)
+    m2.close()
+    deaf = tmc2209.create_drivers("sim", cfg.drivers, (cfg.pan, cfg.tilt))
+    deaf.port.ignore_writes = True
+    try:
+        deaf.configure()
+        check("writes that do not land are caught", False)
+    except tmc2209.DriverMismatch as exc:
+        check("writes that do not land are caught", True, str(exc)[:60])
+    noisy = tmc2209.create_drivers("sim", cfg.drivers, (cfg.pan, cfg.tilt))
+    noisy.port.corrupt_replies = 1
+    noisy.configure()
+    check("one corrupted reply is retried", noisy.configured)
+
     print("abort")
     sim2 = SimBackend(time_scale=1.0)  # run a move in real time so it can be cut
     with PanTiltMount(cfg, sim2) as mount:
@@ -494,6 +571,8 @@ def main(argv=None) -> int:
 
     sub.add_parser("info", help="print derived constants and waveform cost").set_defaults(fn=cmd_info)
     sub.add_parser("status", help="current state").set_defaults(fn=cmd_status)
+    sub.add_parser("drivers", help="configure the TMC2209s over UART and read them back "
+                   "(drivers stay off)").set_defaults(fn=cmd_drivers)
     sub.add_parser("selftest", help="run the logic against the simulator").set_defaults(fn=cmd_selftest)
     sub.add_parser("limits", help="record soft limits by hand (§8.5)").set_defaults(fn=cmd_limits)
 

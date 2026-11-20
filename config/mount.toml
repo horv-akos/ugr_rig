@@ -14,6 +14,12 @@ settle_ms = 800                 # MEASURE: dwell after motion before capture
 unzeroed_jog_deg = 15.0         # longest single jog or nudge before a zero is set. The position
                                 # is unknown then, so no soft limit can protect the head
 
+[drivers]                       # TMC2209 configuration over UART: docs/CONNECTIONS.md §6
+port = "/dev/serial0"           # PL011 on GPIO14/15 (enable_uart=1, dtoverlay=disable-bt)
+baud = 115200
+rsense_ohm = 0.11               # sense resistors of the TMC2209 SilentStepStick: check the board
+hold_delay = 8                  # IHOLDDELAY 0..15: ramp from run to hold current
+
 [pins]                          # BCM numbering. 18 and 19 are reserved by pigpio.
 pan_step = 17
 pan_dir = 27
@@ -31,6 +37,9 @@ gear_teeth_driver = 17          # motor pinion
 gear_teeth_driven = 144         # base gear -> 8.4706, 75.29 steps/deg
 # gear_ratio = 8.470588
 invert = false                  # flip if positive degrees turn the wrong way
+uart_address = 0                # MS1 = MS2 = GND
+run_current_a = 0.6             # MEASURE (PIVOT_DETAIL §8.6): RMS; QSH4218-35-10-027 is rated 1.0 A
+hold_current_a = 0.3            # MEASURE: applied during the bracket; too low and tilt creeps
 min_deg = -170.0                # MEASURE: drive to interference by hand, back off
 max_deg = 170.0                 # MEASURE
 max_speed_deg_s = 5.0
@@ -46,6 +55,9 @@ gear_teeth_driven = 64          # 3.0476, 27.09 steps/deg. Confirmed with the an
                                 # this build (would scale every tilt angle 2.52x).
 # gear_ratio = 3.047619
 invert = false
+uart_address = 1                # MS1 = 3V3, MS2 = GND
+run_current_a = 0.6             # MEASURE (PIVOT_DETAIL §8.6)
+hold_current_a = 0.3            # MEASURE: the tilt axis carries the camera; check it does not creep
 min_deg = -45.0                 # MEASURE
 max_deg = 60.0                  # MEASURE
 max_speed_deg_s = 5.0

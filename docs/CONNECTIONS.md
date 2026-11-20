@@ -244,7 +244,7 @@ point. Keep the PD module leads short.
 ## 6. Driver configuration over UART
 
 Motor current and microstepping are set in software, not with the trimpot. Written at startup
-by `hal/tmc2209.py` (to be written — own thin layer, TMC2209 datasheet as spec):
+by `hal/tmc2209.py` (own thin layer, TMC2209 datasheet as spec; check it with `mountctl drivers`):
 
 | Register | Setting |
 |---|---|

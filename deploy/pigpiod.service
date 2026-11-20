@@ -1,0 +1,14 @@
+# /etc/systemd/system/pigpiod.service
+#
+# -t 1 clocks pigpio's DMA off the PCM peripheral, not PWM (docs/PIVOT_DETAIL.md §4.2).
+# -l   local connections only: nothing on the WiFi can drive the GPIO.
+[Unit]
+Description=pigpio daemon (DMA step pulses for the pan-tilt head)
+
+[Service]
+Type=forking
+ExecStart=/usr/local/bin/pigpiod -t 1 -l
+# If pigpio came from apt instead of a source build, it lives in /usr/bin.
+
+[Install]
+WantedBy=multi-user.target

@@ -20,20 +20,36 @@ config.py    TOML -> dataclasses. Every physical constant lives in config/mount.
 motion.py    trapezoidal profile -> merged two-axis timeline -> pigpio pulses
 backend.py   PulseBackend: PigpioBackend (on the Pi) or SimBackend (on a desk)
 mount.py     PanTiltMount: limits, backlash, step accounting, wave streaming
+tmc2209.py   TMC2209 configuration over UART: DriverBus, SerialPort, SimTmcBus
 ```
 
 ## On the Pi
 
-`pigpiod` must be running, and with `-t 1` so it clocks off PCM rather than PWM:
+`pigpiod` must be running with `-t 1`, so it clocks off PCM rather than PWM, and the
+UART must be enabled for the drivers. Units and the full setup: `deploy/README.md`.
 
-```ini
-# /etc/systemd/system/pigpiod.service
-[Service]
-ExecStart=/usr/bin/pigpiod -t 1 -l    # -l = local connections only
-Type=forking
+## Driver configuration (`tmc2209.py`)
+
+MS1/MS2 are UART address straps on this board, so an unconfigured driver runs PAN
+1/8 and TILT 1/32 microstepping: every angle silently wrong. `enable()` therefore
+first calls `DriverBus.configure()`: write GCONF (UART mode, microsteps from the
+register), CHOPCONF (MRES from `microsteps`), IHOLD_IRUN (currents from
+`[axis.*]`), clear GSTAT, then prove it: GCONF and CHOPCONF read back equal, and
+the write counter IFCNT advanced once per write (IHOLD_IRUN is write-only). On
+silence or a mismatch the drivers stay off.
+
+Before every motion `check()` reads GSTAT and DRV_STATUS. A reset (motor rail
+cycled) is reconfigured, the position marked uncertain and the move refused
+(`DriverReset`); over-temperature or a short refuses it too (`DriverFault`);
+pre-warnings and open load show in `status()["drivers"]["warnings"]`.
+
+Real hardware without a driver bus will not enable at all; the pulse simulator
+runs with `SimTmcBus` (from the rig server and `mountctl`) or without one.
+
 ```
-
-The app service takes `Requires=pigpiod.service` and `After=pigpiod.service`.
+mountctl drivers                   # configure + read back, drivers stay off
+mountctl --backend sim drivers     # the same against SimTmcBus
+```
 
 ## Use
 
@@ -138,12 +154,9 @@ Settle time (§8.2) needs the camera and is not in here.
 
 ## Known gaps
 
-- **UART driver configuration is not written yet** (`hal/tmc2209.py`, next). The
-  hardware is wired for UART: MS1/MS2 are address straps, so until the drivers
-  are configured PAN runs at 1/8 and TILT at 1/32 microstepping, not the 1/16
-  this code assumes. Do not run moves on the real head before `tmc2209.py`
-  exists and verifies the configuration. Spec: `docs/PIVOT_DETAIL.md` §4.4,
-  `docs/CONNECTIONS.md` §6.
+- **The driver UART is tested against `SimTmcBus` only.** Framing and CRC match
+  the datasheet's example, but nothing has talked to a real TMC2209 yet. Run
+  `mountctl drivers` on the bench (motor rail on) before the first move.
 - Aborting mid-move estimates the stopping point from elapsed time within the
   interrupted wave. It is flagged uncertain rather than trusted.
 - `jog_steps()` bypasses limits and backlash by design. Bench use only.

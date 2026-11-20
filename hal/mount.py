@@ -29,7 +29,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Iterator
 
-from .backend import PulseBackend, create_backend
+from .backend import PulseBackend, SimBackend, create_backend
 from .config import AxisConfig, MountConfig, load_config
 from .motion import AxisPlan, WaveChunk, build_chunks, plan_timeline, stoppable
 
@@ -80,9 +80,14 @@ class MoveResult:
 
 
 class PanTiltMount:
-    def __init__(self, config: MountConfig, backend: PulseBackend) -> None:
+    def __init__(self, config: MountConfig, backend: PulseBackend, drivers=None) -> None:
+        """`drivers`: a `hal.tmc2209.DriverBus`. Required with real hardware: without the
+        UART configuration the drivers run 1/8 and 1/32 microstepping and every angle is
+        wrong, so `enable()` refuses. The pulse simulator runs with or without one."""
         self.cfg = config
         self._b = backend
+        self.drivers = drivers
+        self.driver_warnings: list[str] = []
         self._pan_steps = 0
         self._tilt_steps = 0
         self._zeroed = False
@@ -111,7 +116,11 @@ class PanTiltMount:
         **backend_kwargs,
     ) -> "PanTiltMount":
         cfg = load_config(path)
-        return cls(cfg, create_backend(backend, **backend_kwargs))
+        from .tmc2209 import create_drivers
+
+        drivers = create_drivers("uart" if backend == "pigpio" else "sim", cfg.drivers,
+                                 (cfg.pan, cfg.tilt))
+        return cls(cfg, create_backend(backend, **backend_kwargs), drivers)
 
     # -- state ------------------------------------------------------------ #
 
@@ -149,6 +158,8 @@ class PanTiltMount:
             "tilt_steps": self._tilt_steps,
             "moving": self._b.wave_tx_busy(),
             "backlash_ok": {a.name: self._lash_ok(a) for a in (self.cfg.pan, self.cfg.tilt)},
+            "drivers": None if self.drivers is None else {
+                **self.drivers.status(), "warnings": list(self.driver_warnings)},
         }
 
     def _lash_ok(self, axis: AxisConfig) -> bool:
@@ -159,7 +170,15 @@ class PanTiltMount:
     # -- power ------------------------------------------------------------ #
 
     def enable(self) -> None:
-        """Energise both drivers. They stay energised so nothing creeps."""
+        """Configure the drivers over UART and verify it, then energise them. They stay
+        energised so nothing creeps. Raises (drivers stay off) if the configuration cannot
+        be verified, or if real hardware has no driver bus at all."""
+        if self.drivers is None and not isinstance(self._b, SimBackend):
+            raise MountError("no driver UART: without its configuration the drivers run 1/8 "
+                             "and 1/32 microstepping, so the head will not be enabled")
+        if self.drivers is not None:
+            self.drivers.configure()
+            self.driver_warnings = []
         pins = self.cfg.pins
         self._b.write(pins.enable, 0 if pins.enable_active_low else 1)
         time.sleep(self.cfg.enable_settle_ms / 1000.0)
@@ -381,9 +400,24 @@ class PanTiltMount:
         self._abort.set()
 
     def _begin(self, stop: threading.Event | None) -> threading.Event:
+        self._check_drivers()
         self._abort.clear()
         self._stop = stop or threading.Event()
         return self._stop
+
+    def _check_drivers(self) -> None:
+        """Before every motion: a driver reset (motor rail cycled) means the motors were
+        unpowered, so the position is marked uncertain and the move refused; faults refuse
+        too. Warnings (pre-warning temperature, open load) are kept for status()."""
+        if self.drivers is None or not self._enabled:
+            return
+        from .tmc2209 import DriverReset
+
+        try:
+            self.driver_warnings = self.drivers.check()
+        except DriverReset:
+            self._certain = False
+            raise
 
     def _require_enabled(self) -> None:
         if not self._enabled:
@@ -669,6 +703,11 @@ class PanTiltMount:
             self._b.close()
         except Exception:
             pass
+        if self.drivers is not None:
+            try:
+                self.drivers.close()
+            except Exception:
+                pass
 
     def __enter__(self) -> "PanTiltMount":
         return self

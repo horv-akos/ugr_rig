@@ -1,0 +1,23 @@
+# /etc/systemd/system/ugr-rig.service
+#
+# The rig server: owns the head and the camera, serves the pages on the Pi's own WiFi.
+# Paths assume user `ugr`, the repository in ~/ugr_rig with a venv in .venv, and data in
+# ~/ugr_data. Adjust all three together.
+[Unit]
+Description=UGR rig server (mount, camera, web UI)
+Requires=pigpiod.service
+After=pigpiod.service network-online.target
+Wants=network-online.target
+
+[Service]
+User=ugr
+Group=ugr
+WorkingDirectory=/home/ugr/ugr_rig
+ExecStart=/home/ugr/ugr_rig/.venv/bin/python -m web --backend pigpio --camera gphoto2 --host 0.0.0.0 --port 8000 --data /home/ugr/ugr_data
+# On stop the server cuts any motion and releases the drivers (rig.close()).
+TimeoutStopSec=15
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

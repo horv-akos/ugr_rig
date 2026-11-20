@@ -156,8 +156,10 @@ pigpio. UART carries settings only, never motion.
 - DRV_STATUS is polled for over-temperature pre-warning, open load and short.
 - StallGuard is not used: unreliable at ~5 °/s. The optical drift check stays the integrity check.
 
-Implementation: own thin layer, `hal/tmc2209.py` on pyserial, TMC2209 datasheet as the spec.
-Not written yet. No GPL dependency.
+Implementation: own thin layer, `hal/tmc2209.py` on pyserial (BSD), TMC2209 datasheet as the
+spec. Built 2026-11-20 and tested against a simulated bus (`SimTmcBus`, including the single-wire
+echo); IHOLD_IRUN is write-only, so writes are verified with the IFCNT write counter. Not yet
+run against the real drivers: `mountctl drivers` on the bench first.
 
 ---
 
@@ -202,7 +204,7 @@ hal/config.py    TOML -> dataclasses; every physical constant in config/mount.to
 hal/motion.py    trapezoidal profile -> merged two-axis timeline -> pigpio pulses
 hal/backend.py   PulseBackend: PigpioBackend (Pi) | SimBackend (desk)
 hal/mount.py     PanTiltMount
-hal/tmc2209.py   UART register layer — to be written (§4.4)
+hal/tmc2209.py   UART register layer: configure + verify, check before moves (§4.4)
 tools/mountctl.py  bench CLI + the §8 measurement procedures
 ```
 

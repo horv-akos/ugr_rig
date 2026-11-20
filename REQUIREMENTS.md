@@ -280,6 +280,8 @@ The Pi generates step/dir directly through pigpio; all motion logic is Python. S
   before enabling; refuse to enable on mismatch or no answer
 - Detect a driver reset (motor rail cycled) before each move; reconfigure and mark position
   uncertain
+  (both built 2026-11-20 in `hal/tmc2209.py`, against a simulated bus; currents in
+  `[axis.*]` of mount.toml are MEASURE placeholders until §8.6)
 
 **Control service and API** (decided 2026-11-19; mount side built and sim-tested: `hal/mount.py`,
 `service/`, `web/api.py`, `tools/rigctl.py`). The head is open-loop, so its position exists only
@@ -552,7 +554,7 @@ ugr_rig/
 │   ├── backend.py        pigpio backend + desk simulator                     (built)
 │   ├── mount.py          limits, backlash, step accounting, wave streaming   (built)
 │   │                     jog, nudge, speed, controlled stop, backlash state  (built)
-│   ├── tmc2209.py        UART register layer: config, read-back, status      (next)
+│   ├── tmc2209.py        UART register layer: config, read-back, status      (built, sim-tested)
 │   ├── camera_config.py  config/camera.toml, shutter arithmetic              (built)
 │   ├── camera.py         gphoto2/PTP: settings, bracket capture, download,   (built, mock-tested)
 │   │                     live view preview frames
@@ -609,8 +611,9 @@ sim-tested.
 
 1. Camera on the bench: `ugrctl camera info`, one bracket, and live view over gphoto2. This is the
    most likely source of unpleasant surprises
-2. `hal/tmc2209.py`, on the bench with a logic analyser, then on the built head: gear ratio, settle
-   time, backlash, repeatability, run/hold current
+2. `hal/tmc2209.py` (built 2026-11-20 against a simulated bus): `mountctl drivers` on the bench,
+   ideally with a logic analyser on the UART, then on the built head: gear ratio, settle time,
+   backlash, repeatability, run/hold current
 3. At the desk, alongside 1–2, against the simulators: continuous jog in `hal/mount.py`,
    `service/` with its API, `rigctl`, preview frames in `hal/camera*.py` (built 2026-11-19)
 4. `web` movement calibration page: needed in the cab to record positions, and handy for measuring
@@ -627,6 +630,9 @@ sim-tested.
 
 ## 9. Open items
 
+- No real-time clock: on its own WiFi the Pi has no internet time, so study ids and
+  timestamps can be wrong after a cold start. Decide: an RTC module (hardware), or the page
+  sending the browser's time (needs a privileged helper to set the clock)
 - Hemisphere sweep as built: a 3 x 3 grid around the forward gaze (columns ~57°, rows ~40°),
   shot with the full 8-frame bracket. §3.3 asks for a short bracket: the sweep only needs the
   background, so the shortest frames could be dropped there. Decide once the real capture time
