@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#14181d">
+<title>Camera · UGR rig</title>
+<link rel="stylesheet" href="/static/style.css">
+<script type="module" src="/static/camera.js"></script>
+</head>
+<body>
+<header class="top">
+  <div class="brand">UGR rig</div>
+  <nav aria-label="Pages">
+    <a href="/home">Home</a>
+    <a href="/movement">Movement</a>
+    <a class="active" href="/camera" aria-current="page">Camera</a>
+  </nav>
+  <div id="conn" class="conn" role="status">connecting…</div>
+</header>
+
+<main class="camera">
+  <section class="panel live-panel" aria-label="Live view">
+    <div class="live roi-box" id="live-box">
+      <img id="live" alt="Live view from the camera">
+      <canvas id="overlay" aria-hidden="true"></canvas>
+      <div id="live-msg" class="live-msg"></div>
+    </div>
+    <p class="hint">Aim at the matt target (Movement page), then drag a box on the target here.
+      Keep it inside the target, away from its edges and any highlight.</p>
+  </section>
+
+  <section class="panel cal-panel" aria-label="Calibration">
+    <h2>Luminance calibration</h2>
+    <dl class="info">
+      <dt>Profile</dt><dd id="cal-profile">—</dd>
+      <dt>Stored k</dt><dd id="cal-stored">—</dd>
+      <dt>ROI</dt><dd id="cal-roi">drag a box on the live view</dd>
+    </dl>
+    <fieldset class="lighting">
+      <legend>Meter reading</legend>
+      <label><input type="radio" name="meter" value="luminance" checked> Luminance meter</label>
+      <label><input type="radio" name="meter" value="lux"> Lux meter + panel reflectance</label>
+    </fieldset>
+    <div class="row" id="meter-l">
+      <label class="stack">Target luminance, cd/m²<input id="lum" type="number" step="any" min="0" inputmode="decimal"></label>
+    </div>
+    <div class="row" id="meter-e" hidden>
+      <label class="stack">Illuminance, lx<input id="lux" type="number" step="any" min="0" inputmode="decimal"></label>
+      <label class="stack">Reflectance ρ<input id="rho" type="number" step="any" min="0" max="1" inputmode="decimal"></label>
+    </div>
+    <button id="shoot" class="primary big">Shoot calibration bracket</button>
+    <div id="cal-result" class="cal-result" hidden></div>
+    <h2 class="sub">Or type k</h2>
+    <form id="typed-k" class="typed-k">
+      <div class="row">
+        <label class="stack">k, cd/m² per DN·N²/(t·ISO)<input name="k" type="number" step="any" min="0"
+          inputmode="decimal" required placeholder="e.g. 0.0064"></label>
+        <label class="stack wide">Where it comes from<input name="note" maxlength="300" required
+          autocomplete="off" placeholder="e.g. lab calibration 2026-11, report no."></label>
+      </div>
+      <button type="submit">Set k</button>
+      <p class="hint">A typed k replaces the stored one, measured or not. It is kept in the
+        history below with its note, and every study using it is flagged "k typed by hand".</p>
+    </form>
+    <h2 class="sub">k history</h2>
+    <div class="table-wrap"><table class="library">
+      <thead><tr><th>When (UTC)</th><th class="num">k</th><th class="num">Change</th>
+        <th>Source</th></tr></thead>
+      <tbody id="k-rows"></tbody>
+    </table></div>
+    <h2 class="sub">Calibration shots</h2>
+    <div class="table-wrap"><table class="library">
+      <thead><tr><th>When (UTC)</th><th class="num">k</th><th class="num">Drift</th>
+        <th class="num">Uniformity</th><th>Status</th></tr></thead>
+      <tbody id="cal-rows"></tbody>
+    </table></div>
+  </section>
+
+  <section class="panel prof-panel" aria-label="Camera profile">
+    <h2>Camera profile</h2>
+    <div class="row">
+      <select id="profile" aria-label="Camera profile"></select>
+      <button id="activate">Use for studies</button>
+      <button id="new-prof">New copy</button>
+      <button id="del-prof" class="quiet">Delete</button>
+    </div>
+    <p class="hint">A profile is one body, lens and aperture. Changing the lens means a new profile
+      (copy, then calibrate): k does not carry over.</p>
+    <form id="prof-form" class="prof-form">
+      <label>Notes<input name="notes" maxlength="500"></label>
+      <div class="two">
+        <label>Body serial<input name="body_serial" maxlength="60" placeholder="empty: not checked"></label>
+        <label>Lens name<input name="lens_name" maxlength="80" placeholder="empty: not checked"></label>
+      </div>
+      <div class="two">
+        <label>Focal length, mm<input name="focal_mm" type="number" step="any" required></label>
+        <label>Distortion k1<input name="distortion_k1" type="number" step="any" required></label>
+      </div>
+      <label>Vignetting map (.npy path)<input name="vignetting_map" maxlength="300" placeholder="empty: no correction (flagged)"></label>
+      <div class="two">
+        <label>Aperture f/<input name="aperture" type="number" step="any" required></label>
+        <label>ISO<input name="iso" type="number" step="1" required></label>
+      </div>
+      <label>Bracket (shutter speeds)<input name="shutter" required></label>
+      <div class="two">
+        <label>Shutter timing<select name="shutter_model"><option value="apex">APEX (actual)</option>
+          <option value="nominal">nominal labels</option></select></label>
+        <label>Global spectral factor<input name="spectral_factor" type="number" step="any" required></label>
+      </div>
+      <label>Spectral factors per source type<textarea name="spectral_factors" rows="3"
+        placeholder="white_led = 1.00&#10;amber = 1.08"></textarea></label>
+      <div class="row">
+        <button type="submit" class="primary">Save profile</button>
+        <button type="button" id="take-body">Fill body and lens from the camera</button>
+      </div>
+    </form>
+    <dl id="body-info" class="info"></dl>
+    <h2 class="sub">Lens geometry</h2>
+    <img id="geometry" class="geometry" alt="Solid angle and position index maps of this lens">
+    <p class="hint">Focal length and k1 are nominal until measured (spot tracking with the head:
+      not built yet). 1 % off in focal length is ~2 % off in every solid angle.</p>
+  </section>
+
+  <section class="panel log-panel" aria-label="Messages">
+    <h2>Messages</h2>
+    <ol id="log" class="log" aria-live="polite"></ol>
+  </section>
+</main>
+</body>
+</html>

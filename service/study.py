@@ -33,7 +33,10 @@ from pipeline import study as worker
 from .positions import PositionProfile, now_iso, slug
 
 if TYPE_CHECKING:
+    from .camera_profiles import CameraProfile
     from .controller import RigController
+
+CALIBRATION_FRESH_H = 12   # a calibration this recent counts as the session's calibration shot
 
 log = logging.getLogger(__name__)
 
@@ -61,7 +64,8 @@ def sweep_directions(fov_deg: tuple[float, float], limits: dict[str, list[float]
 
 
 def new_record(study_id: str, profile: PositionProfile, lighting: str, operator: str,
-               notes: str, sweep: bool, check: bool, software: dict[str, Any]) -> dict[str, Any]:
+               notes: str, sweep: bool, check: bool, software: dict[str, Any],
+               camera: "CameraProfile | None" = None) -> dict[str, Any]:
     return {
         "id": study_id,
         "schema": 1,
@@ -72,6 +76,12 @@ def new_record(study_id: str, profile: PositionProfile, lighting: str, operator:
                     "zero_reference": profile.zero_reference,
                     "forward_gaze": list(profile.forward_gaze) if profile.forward_gaze else None,
                     "content_hash": profile.content_hash},
+        "camera_profile": None if camera is None else {
+            "name": camera.name, "content_hash": camera.content_hash, "k": camera.k,
+            "k_measured_at": camera.k_measured_at, "k_source": camera.k_source,
+            "k_note": camera.k_note, "lens_name": camera.lens_name,
+            "focal_mm": camera.focal_mm, "aperture": camera.aperture, "iso": camera.iso,
+            "shutter": list(camera.shutter)},
         "lighting": lighting,
         "operator": operator.strip(),
         "notes": notes.strip(),
@@ -120,10 +130,13 @@ class StudyRun:
             if text not in self.study["flags"]:
                 self.study["flags"].append(text)
 
-    def prepare(self, profile: PositionProfile) -> None:
-        """Folder, and frozen copies of the profile and each position's masks."""
+    def prepare(self, profile: PositionProfile, camera: "CameraProfile | None" = None) -> None:
+        """Folder, and frozen copies of the profile, the camera profile and each position's
+        masks."""
         self.rig.studies.create(self.study["id"])
         (self.dir / "profile.toml").write_text(profile.to_toml(), encoding="utf-8")
+        if camera is not None:
+            (self.dir / "camera_profile.toml").write_text(camera.to_toml(), encoding="utf-8")
         for pos, entry in zip(profile.positions, self.study["positions"]):
             src = self.rig.profiles.masks_path(profile.name, pos)
             if src.is_file():
@@ -141,13 +154,7 @@ class StudyRun:
                 self.step("checks", "done", f"camera {self.rig.live.source}, head zeroed")
                 self.step("zero", "skipped", "zero set by hand; optical zeroing is not built")
                 self.flag("zero set by hand: no optical zero check, so no drift figure")
-                k, _, _ = self.rig.processing_setup()
-                self.step("calibration", "skipped",
-                          "no calibration shot (not built); "
-                          + ("k from the simulator" if self.rig.live.source == "sim"
-                             else "k from config/analysis.toml" if k else "no k yet"))
-                if self.rig.live.source != "sim":
-                    self.flag("no calibration shot this session: k is the stored value")
+                self._camera_setup(cam)
 
                 if st["options"]["sweep"]:
                     self._sweep(cam, stop)
@@ -183,6 +190,44 @@ class StudyRun:
             st["status"] = "analysing"
         self.save()
         return {"study": st["id"], "status": st["status"]}
+
+    def _camera_setup(self, cam) -> None:
+        """Put the camera profile's exposure on the body, check the body and lens against
+        it, and decide the calibration step: a calibration of this profile within the last
+        CALIBRATION_FRESH_H hours is this session's calibration shot."""
+        from hal.camera_config import load_camera_config
+
+        name = (self.study.get("camera_profile") or {}).get("name")
+        prof = self.rig.camera_profile(name)
+        cam.apply_config(prof.camera_config(load_camera_config()))
+        for m in prof.body_check(cam.info()):
+            self.flag(m)
+        last = prof.k_history[-1] if prof.k_history else None
+        age_h = _age_hours(last.at) if last else None
+        if prof.k_source == "typed":
+            # The newest k was typed: it overrides any measurement before it, and nothing
+            # in this session checked it.
+            self.step("calibration", "skipped",
+                      f"k {prof.k:.5g} typed by hand at {last.at}: {last.note}")
+            self.flag(f"k typed by hand, not measured this session ({last.note})")
+        elif last and age_h is not None and age_h <= CALIBRATION_FRESH_H:
+            drift = "" if last.drift is None else f", {100 * last.drift:+.1f} % from the value before"
+            self.step("calibration", "done",
+                      f"k {last.k:.5g} measured {age_h:.1f} h ago on the target{drift}")
+            if last.drift is not None and abs(last.drift) > 0.10:
+                self.flag(f"k moved {100 * last.drift:+.1f} % at this session's calibration: "
+                          "lens, aperture, filter or in-camera processing changed?")
+        elif prof.k:
+            self.step("calibration", "skipped",
+                      f"no calibration in the last {CALIBRATION_FRESH_H} h; k from "
+                      f"{prof.k_measured_at or 'the profile'}")
+            self.flag("no calibration shot this session: k is the stored value")
+        else:
+            self.step("calibration", "skipped",
+                      "profile never calibrated" + ("; the simulator's k is used"
+                                                    if self.rig.live.source == "sim" else ""))
+            if self.rig.live.source != "sim":
+                self.flag("camera profile never calibrated: no k")
 
     def _goto(self, pan: float, tilt: float, stop: threading.Event) -> bool:
         r = self.rig.mount.move_to(pan, tilt, speed=self.rig.speed, stop=stop)
@@ -252,7 +297,9 @@ class StudyRun:
     def analyse(self) -> None:
         st = self.study
         lb: dict[str, Any] | None = None
-        k, overrides, notes = self.rig.processing_setup()
+        name = (st.get("camera_profile") or {}).get("name")
+        k, overrides, notes = self.rig.processing_setup(
+            name if name in self.rig.camera_profiles.names() else None)
         with self._lock:
             st["processing"] = {"k": k, "overrides": overrides, "notes": notes}
         if not k:
@@ -392,6 +439,16 @@ class StudyRun:
         res["seconds"] = round(time.monotonic() - t0, 2)
         entry["result"], entry["state"] = res, "done"
         self.save()
+
+
+def _age_hours(iso: str) -> float | None:
+    from datetime import datetime, timezone
+
+    try:
+        t = datetime.strptime(iso, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+    return (datetime.now(timezone.utc) - t).total_seconds() / 3600
 
 
 def study_id_for(rig: "RigController", profile_name: str) -> str:

@@ -128,8 +128,17 @@ python -m tools.ugrctl calibrate brackets/target --roi 0.45,0.45,0.55,0.55 --lum
 #   or  --lux 850 --rho 0.92        (L = ρE/π)
 ```
 
-The first time, put the printed `k` into `config/analysis.toml`. After that the session value is
-compared to the stored one and drift above 10 % is a warning.
+With the rig server, calibrate on the camera page (`/camera`) instead: aim at the target, drag a
+box on it in live view, enter the meter reading, shoot. The page shows `k`, the drift from the
+profile's stored value (over 10 % is a warning) and the uniformity inside the box (over 5 % is a
+warning: the box is not fully on the target); **Accept** writes it into the camera profile, with
+the old value kept in the profile's history. `k` lives in the camera profile
+(`<data>/profiles/camera/<name>.toml`), not in `config/analysis.toml`, which only seeds the first
+profile. A calibration accepted within 12 h counts as a study's calibration shot.
+
+Without a meter, type `k` on the same page ("Or type k"), with a note on where it comes from. It
+replaces the stored value, whatever its source; the history keeps the old one. Studies using a
+typed `k` skip the calibration step and are flagged "k typed by hand".
 
 ### 2.4 Geometry (`photometry/masks.py`)
 
@@ -196,8 +205,9 @@ CIE 117: `UGR = 8 log₁₀(0.25 / L_b · Σ L²ω/p²)`, with the perception sc
 ### 2.8 A whole study (`service/study.py`, `pipeline/study.py`)
 
 The home page records a study of every position in a profile: checks, zero (recorded as
-skipped: optical zeroing is not built), calibration shot (skipped: `k` comes from
-`config/analysis.toml`, or the simulator), a 3 x 3 hemisphere sweep around the forward gaze for
+skipped: optical zeroing is not built), calibration shot ("done" when the camera
+profile has a calibration accepted within 12 h, else skipped and flagged; `k` comes from the
+profile, or the simulator's own when the profile is uncalibrated), a 3 x 3 hemisphere sweep around the forward gaze for
 L_b (§2.6), each position, and the first position again as a repeatability check. Live view is
 off for the whole recording. Each bracket is analysed as it lands, in a worker process, sweep
 first so every position gets the session L_b; the study's summary gives the highest UGR, how

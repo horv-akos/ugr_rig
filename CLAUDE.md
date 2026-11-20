@@ -61,13 +61,16 @@ service/     controller.py: owns the mount and camera, one motion thread at a ti
              · study.py: the session sequence (one motion) + its analysis thread
              · positions.py: position profiles as TOML in <data>/profiles/positions/, with
              each position's reference image and masks beside them.
+             · camera_profiles.py: camera profiles (body, lens, exposure, k + history) as
+             TOML in <data>/profiles/camera/; calibrations in <data>/calibrations/
 storage/     studies.py: one folder per study, the record · index.py: SQLite over them,
              rebuilt at every start
 web/         api.py: FastAPI over service/ (/api/...); __main__.py runs it (`python -m web`)
              and prints the reachable URLs (netinfo.py).
              static/: movement page + mask editor (masks.js); plain HTML/CSS/JS ES modules,
              no build step, no CDN.
-             home.html/js: start a study, steps, results, library. Camera page not started
+             home.html/js: start a study, steps, results, library. camera.html/js:
+             camera profiles, k from the target (offered, accepted by hand)
 config/      mount.toml · camera.toml · analysis.toml (also the template for camera profiles)
 deploy/      systemd units (pigpiod, ugr-rig) + Pi setup notes, untried on the Pi
 tools/       mountctl.py (head bench CLI) · ugrctl.py (camera + processing CLI)
@@ -145,7 +148,9 @@ talks to hardware, so it is always testable on a desk against stored brackets.
 - Pages are dark on purpose (a bright screen lights the cab and reflects in the glazing), and
   build DOM with `el()` from `web/static/api.js`, never `innerHTML` with operator-typed names.
 - `k` = cd/m² per (DN · N² / (t · ISO)). `k = 0` means uncalibrated, and `process` refuses
-  without `--k`.
+  without `--k`. In a camera profile `k` is measured on the target or typed with a note (no
+  meter at hand); the newest wins, the history keeps each value's source, and a study on a
+  typed `k` is flagged.
 - Hardware CLIs follow `mountctl` style: argparse subcommands, `--backend/--camera sim`, a
   `selftest` that checks against known answers.
 
@@ -168,7 +173,8 @@ masks read by detection (excluded and flagged for now), studies end to end (home
 `/home`: session sequence, sweep L_b, analysis in a worker process, results, library, zip;
 study folders + SQLite index), camera control (fake libgphoto2 only), the whole processing
 chain for one position with metrics, report images and the Excel workbook, re-analysis,
-`ugrctl`. Not yet run on the real 2000D, on real CR2s, or on
+camera profiles and the camera page at `/camera` (k from the target, accepted into the profile;
+a study uses one accepted within 12 h as its calibration shot), `ugrctl`. Not yet run on the real 2000D, on real CR2s, or on
 the Pi.
 
 Plan v0.6 is recorded in `REQUIREMENTS.md` (decided 2026-11-19): live view from the camera's own
@@ -177,6 +183,6 @@ windscreen reflections, forward-gaze study rating, report images, metrics, Excel
 
 Next, roughly in order (`REQUIREMENTS.md` §8): camera on the body (`camera info`, one bracket,
 live view); `mountctl drivers` on the bench, then the head measurements; Pi setup per
-`deploy/README.md`; at the desk meanwhile, the camera calibration page (k, camera profiles,
-then the calibration shot in the sequence); reflections; forward gaze (with the tiling and
-coverage map); optical zeroing + drift check; PDF. Open items list: `REQUIREMENTS.md` §9.
+`deploy/README.md`; at the desk meanwhile, optical zeroing + drift check + aim check, with lens
+geometry by spot tracking (same centroiding); reflections; forward gaze (with the tiling and
+coverage map); PDF. Open items list: `REQUIREMENTS.md` §9.

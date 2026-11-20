@@ -262,6 +262,40 @@ def render_all(out: Path, L: np.ndarray, labels: np.ndarray, sources: list, mask
     return outputs
 
 
+def geometry_png(geom: CameraGeometry, p_cap: float = 16.0) -> bytes:
+    """A lens's geometry masks side by side: solid angle per pixel, and the position
+    index along the camera axis (how much a source at each point would count)."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    step = max(1, geom.width // 300)
+    gy, gx = np.mgrid[0:geom.height:step, 0:geom.width:step]
+    omega = geom.solid_angle[::step, ::step]
+    p = position_index(geom.pixel_directions(gx, gy), p_cap)
+    fig, axes = plt.subplots(1, 2, figsize=(11, 3.6), dpi=100, facecolor=BG)
+    for ax, data, title, cmap in ((axes[0], omega * 1e6, "solid angle per pixel (µsr)", "viridis"),
+                                  (axes[1], p, "position index p (camera axis)", "magma_r")):
+        im = ax.imshow(data, cmap=cmap, extent=(0, geom.width, geom.height, 0))
+        ax.set_title(title, color=FG, fontsize=10)
+        ax.tick_params(colors=MUTED, labelsize=8)
+        for sp in ax.spines.values():
+            sp.set_color(MUTED)
+        cb = fig.colorbar(im, ax=ax, fraction=0.04)
+        cb.ax.tick_params(colors=FG, labelsize=8)
+    cs = axes[1].contour(gx, gy, p, levels=P_LEVELS, colors=[FG], linewidths=0.8,
+                         extent=None)
+    axes[1].clabel(cs, fmt=lambda v: f"{v:g}", fontsize=7, colors=FG)
+    fh, fv = geom.fov_deg()
+    fig.suptitle(f"{geom.focal_mm:g} mm, k1 {geom.k1:g}: {fh:.1f} x {fv:.1f} deg, "
+                 f"{geom.solid_angle.sum():.3f} sr per frame", color=FG, fontsize=10)
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", facecolor=BG, bbox_inches="tight")
+    plt.close(fig)
+    return buf.getvalue()
+
+
 def _flat(color: str):
     from matplotlib.colors import ListedColormap
 

@@ -63,12 +63,12 @@ ugr_rig/
 ├── photometry/   profile · linearise · hdr · calibration · masks (built)
 ├── analysis/     detection · background · ugr (built) · reflections, forward gaze (planned)
 ├── service/      owns the mount and camera: motions, jog heartbeat, positions, live view (built)
-│                 · camera, session sequence, job queue (planned)
+│                 · session sequence, analysis worker, camera profiles (built)
 ├── storage/      data directory, profiles, SQLite index, study archive, exports
 ├── report/       images (photo, maps, boxes, masks, UGR stamp) · Excel (built) · PDF
 ├── pipeline/     region (built) · study, optical zeroing, recovery
 ├── tests/        pytest: camera control flow against a fake libgphoto2, synthetic end to end
-└── web/          FastAPI: HTTP API, live view, movement and home pages (built) · camera page
+└── web/          FastAPI: HTTP API, live view, movement, home and camera pages (built)
 ```
 
 `hal` is the only layer that touches hardware, so the whole photometry and analysis chain is
@@ -115,12 +115,12 @@ where to point the laptop's browser. Bound to 127.0.0.1 over SSH it says how to 
 | Live view (camera preview), MJPEG stream | **Built**; simulated cab on the desk; gphoto2 preview tested against a fake libgphoto2 only, confirm on the body |
 | Jog, nudge, speed and controlled stop in `hal/mount.py`; `service/` + HTTP API; `rigctl` | **Built**, sim-tested; not yet on hardware |
 | Measure the built head (`docs/PIVOT_DETAIL.md` §8) | After assembly |
-| `storage` + session sequence + analysis worker (`service/study.py`, `pipeline/study.py`) | **Built**, sim-tested; optical zero, drift check and calibration shot recorded as skipped |
+| `storage` + session sequence + analysis worker (`service/study.py`, `pipeline/study.py`) | **Built**, sim-tested; optical zero and drift check recorded as skipped; calibration shot from an accepted calibration within 12 h |
 | Reflections in detection, forward-gaze combination | Not started |
 | `report`: photo, contribution map, source map, masks, UGR stamp, Excel; re-analysis | **Built**, sim-tested; CR2 photo untested; PDF not started |
 | `web`: movement calibration page, reference images, mask editor | **Built**, sim-tested; tiling, coverage map and aim check to come |
 | `web`: home page (start a study, steps, results, library, zip) | **Built**, sim-tested |
-| `web`: camera calibration page | Not started |
+| `web`: camera page: camera profiles, `k` from the target or typed in, `k` history, lens geometry maps | **Built**, sim-tested; lens geometry by spot tracking and vignetting not started |
 
 ---
 

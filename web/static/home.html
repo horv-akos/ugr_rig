@@ -14,7 +14,7 @@
   <nav aria-label="Pages">
     <a class="active" href="/home" aria-current="page">Home</a>
     <a href="/movement">Movement</a>
-    <span class="nav-off" title="Comes with camera profiles">Camera</span>
+    <a href="/camera">Camera</a>
   </nav>
   <div id="conn" class="conn" role="status">connecting…</div>
 </header>
@@ -25,6 +25,8 @@
     <form id="start-form" class="start-form">
       <label>Position profile
         <select name="profile" id="profile" required></select></label>
+      <label>Camera profile
+        <select name="camera_profile" id="camprof"></select></label>
       <fieldset class="lighting">
         <legend>Lighting</legend>
         <label><input type="radio" name="lighting" value="dark" checked> Dark (night, darkened hall)</label>

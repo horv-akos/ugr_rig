@@ -318,6 +318,9 @@ class FakeCamera:
     def end_preview(self) -> None:
         self.previewing = False
 
+    def apply_config(self, config: CameraConfig) -> None:
+        self.config = config
+
     def capture_bracket(self, out_dir: str | Path,
                         meta: dict[str, Any] | None = None) -> BracketManifest:
         if not self._connected:

@@ -144,6 +144,7 @@ class Camera(Protocol):
                         meta: dict[str, Any] | None = None) -> BracketManifest: ...
     def preview(self) -> bytes: ...       # one live-view JPEG
     def end_preview(self) -> None: ...    # leave live view (lower the mirror)
+    def apply_config(self, config: CameraConfig) -> None: ...   # e.g. a camera profile's
 
 
 def create_camera(kind: str, config: CameraConfig, **kwargs) -> Camera:
@@ -451,6 +452,14 @@ class Gphoto2Camera:
         out["config_names"] = dict(self._names)
         return {k: (str(v) if v is not None else None) if not isinstance(v, dict) else v
                 for k, v in out.items()}
+
+    def apply_config(self, config: CameraConfig) -> None:
+        """Switch to another exposure setup (a camera profile's) and, if connected, set
+        aperture, ISO and the rest on the body now rather than at the next connect."""
+        self.config = config
+        self._choice_cache.clear()
+        if self._cam is not None:
+            self._apply_static_settings()
 
     def choices(self) -> dict[str, list[str]]:
         return {k: self._choices(k) for k in ("shutter", "aperture", "iso", "format", "target")

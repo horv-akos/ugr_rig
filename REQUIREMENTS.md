@@ -213,6 +213,22 @@ measured `k` **validates** the value stored in the camera profile (§4.5) rather
 raises a warning in the UI — that is the catch for a swapped lens, a dirty filter, a changed
 aperture, or in-camera processing left enabled.
 
+As built (2026-11-20): the calibration is shot from the camera page (§5.4), stored under
+`<data>/calibrations/<id>/` (bracket + `calibration.json`) and offered, never applied by itself;
+the operator accepts it into the profile. A study counts a calibration of its camera profile
+accepted within the last 12 h as its calibration shot (step "done", with the drift flagged when
+over 10 %). Otherwise the step is skipped and flagged, and the stored `k` is used. Shooting the
+target inside the session sequence itself needs a target position in the position profile: not
+built.
+
+`k` can also be **typed in** (decided 2026-11-20: a luminance meter will most likely not be
+provided), with a required note on where the value comes from (a lab calibration, another rig).
+The newest value wins, typed or measured: a typed `k` replaces the stored one, the old value
+stays in the profile's history, and the history records each value's source. A study whose
+profile's current `k` was typed records the calibration step as skipped, carries `k_source` and
+the note in `study.json`, and is flagged "k typed by hand". A typed `k` is only as good as its
+source: with no meter, nothing in the session checks it.
+
 Useful context on tolerance: a pure scale error in `k` largely cancels, because UGR carries `L²`
 in the numerator and `L_b` in the denominator. Scaling every luminance by `c` shifts UGR by only
 `8·log₁₀(c)` — 10% off in `k` is 0.33 UGR points.
@@ -251,7 +267,14 @@ measured, and the spectral factors. Changing the lens means a new profile and a 
   starts from. Every result stores the profile's name and content hash.
 - On connect, the serial and lens name the body reports are compared with the selected profile. A
   mismatch is a warning in the UI and a flag on every result of that study.
-- **Lens geometry measured with the head**: pan and tilt by known angles while tracking one small
+- Built 2026-11-20 (`service/camera_profiles.py`): profiles as TOML in `<data>/profiles/camera/`,
+  a default made from the config templates at first start, the active one in
+  `profiles/camera/.active`. A copy starts uncalibrated; `k` changes only by accepting a
+  calibration and keeps a history of the last values; deleting moves the file to `.trash/`. A
+  study freezes `camera_profile.toml` into its folder; analysis and re-analysis read the lens
+  constants and `k` from it. The body check runs at the study's checks step and at calibration.
+- **Lens geometry measured with the head** (not built; with optical zeroing, it needs the same
+  spot centroiding): pan and tilt by known angles while tracking one small
   bright spot across the frame. Pixel position against angle gives the effective focal length and
   `k1` without a chart. Needs the gear ratios verified first (`docs/PIVOT_DETAIL.md` §8).
 - **Vignetting**: a flat field at the working aperture, or the same spot-tracking run with a small
@@ -386,9 +409,9 @@ sequence, step lights, automatic analysis, per-position cards with the luminance
 summary, library search, results zip, disk space; since 2026-11-20 the five images of §5.5
 per card (a switcher picks which), each card's top source and threshold sensitivity, the Excel
 workbook, and re-analysis from the recorded brackets with the previous results kept under
-`previous/`. Not built: camera profile selection (§4.5), the raw zip, the comparison view and
-the shutdown button. Zero and calibration shot are recorded as skipped and flagged
-until optical zeroing and the camera calibration page exist.)
+`previous/`; camera profile selection (2026-11-20, with a preflight line for an uncalibrated
+profile). Not built: the raw zip, the comparison view and the shutdown button. The zero step is
+recorded as skipped and flagged until optical zeroing exists; the calibration step as in §4.2.)
 
 - Select the position profile and the camera profile; set the lighting condition (§3.1), operator
   and notes
@@ -426,14 +449,19 @@ while the arrows are pressed.
 - Mask editor per position: exclusion, glazing and named luminaire ROIs (type, optional `reflects`),
   drawn on a captured frame
 
-**Camera calibration**
+**Camera calibration** (`/camera`, built 2026-11-20 on the simulator, except the lens geometry
+measurement, the vignetting map and checking the exposure settings against the body's choices)
 
-- Camera profiles (§4.5): create, copy when the lens changes, edit; body and lens check
+- Camera profiles (§4.5): create, copy when the lens changes, edit, choose the one used for
+  studies, delete; body and lens check, and "fill body and lens from the camera"
 - Exposure settings: aperture, ISO, bracket and shutter model, against the choices the body offers
-- Lens geometry: focal length and `k1` from the spot-tracking run; vignetting map
+- Lens geometry: focal length and `k1` from the spot-tracking run; vignetting map. As built, both
+  are typed in and the page shows their solid-angle and position-index maps
 - Luminance calibration: aim at the target in live view, draw the ROI, enter the meter reading
   (luminance, or illuminance and ρ), shoot. Shows the measured `k` against the stored one and the
-  drift; accept into the profile. `k` history per profile
+  drift; accept into the profile. Or type `k` with a note on where it comes from: it replaces
+  the stored value (the page asks first when it differs). `k` history per profile, with each
+  value's source
 - Spectral factor table per source type
 - Geometry masks of the profile: solid angle per pixel, position index for the camera axis and for
   the forward gaze
@@ -584,7 +612,8 @@ ugr_rig/
 │   └── forward.py        all positions: de-duplication, coverage, forward-gaze UGR (planned)
 ├── service/              rig controller: owns the mount and camera, one motion at a time, jog
 │                         heartbeat, position profiles, live view; study.py:  (built)
-│                         the session sequence and its analysis queue
+│                         the session sequence and its analysis queue;
+│                         camera_profiles.py: camera profiles, k history      (built)
 ├── storage/              study folders (the record) + SQLite index (search)  (built)
 │                         exports beyond the results zip                      (planned)
 ├── report/               images.py: photo, luminance, contribution, sources, masks,
@@ -595,7 +624,7 @@ ugr_rig/
 │                         forward gaze, optical zeroing                       (planned)
 ├── web/                  FastAPI over service/: HTTP API, MJPEG live view, movement and home
 │                         pages (static/: plain HTML/CSS/JS, no build step)   (built)
-│                         camera calibration page                             (planned)
+│                         camera calibration page                             (built)
 └── tools/                mountctl, ugrctl: bench CLIs; rigctl: client of the service API (built)
 ```
 
@@ -635,7 +664,9 @@ sim-tested.
 6. Reflections in detection, the forward-gaze combination, report images and the Excel workbook
    (images, metrics, Excel and re-analysis built 2026-11-20)
 7. Camera calibration page (lens geometry, `k`), validation of the photometry against the target
-   and the handheld meter; PDF report
+   and the handheld meter; PDF report (camera profiles, the page and `k` built 2026-11-20 on the
+   simulator; lens geometry by spot tracking goes with optical zeroing; validation needs the
+   body and the meter)
 
 ---
 

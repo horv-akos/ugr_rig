@@ -97,11 +97,35 @@ class Order(BaseModel):
 
 class StartStudy(BaseModel):
     profile: str = Field(min_length=1, max_length=80)
+    camera_profile: str | None = Field(None, max_length=80)
     lighting: Literal["dark", "daylight"]
     operator: str = Field("", max_length=80)
     notes: str = Field("", max_length=2000)
     sweep: bool = True
     check: bool = True
+
+
+class NewCameraProfile(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    copy_from: str | None = Field(None, max_length=80)
+
+
+class Calibrate(BaseModel):
+    profile: str = Field(min_length=1, max_length=80)
+    roi: list[float] = Field(min_length=4, max_length=4)
+    luminance: float | None = Field(None, gt=0)
+    lux: float | None = Field(None, gt=0)
+    rho: float | None = Field(None, gt=0, le=1)
+    wait: bool = False
+
+
+class Accept(BaseModel):
+    calibration: str = Field(min_length=1, max_length=120)
+
+
+class TypedK(BaseModel):
+    k: float = Field(gt=0, lt=10)
+    note: str = Field(min_length=1, max_length=300)
 
 
 class Run(BaseModel):
@@ -145,6 +169,10 @@ def create_app(rig: RigController) -> FastAPI:
     @app.get("/home", include_in_schema=False)
     def home_page() -> FileResponse:
         return FileResponse(STATIC / "home.html", headers={"Cache-Control": "no-cache"})
+
+    @app.get("/camera", include_in_schema=False)
+    def camera_page() -> FileResponse:
+        return FileResponse(STATIC / "camera.html", headers={"Cache-Control": "no-cache"})
 
     @app.get("/movement", include_in_schema=False)
     def movement_page() -> FileResponse:
@@ -245,6 +273,97 @@ def create_app(rig: RigController) -> FastAPI:
     def estop() -> dict[str, Any]:
         return motion(rig.estop())
 
+    # -- camera profiles and calibration ---------------------------------------- #
+
+    def cam_view(p) -> dict[str, Any]:
+        d = p.as_dict()
+        d["active"] = p.name == rig.camera_profile().name
+        return d
+
+    @app.get("/api/camera/profiles")
+    def camera_profiles() -> list[dict[str, Any]]:
+        active = rig.camera_profile().name
+        out = []
+        for n in rig.camera_profiles.names():
+            p = rig.camera_profiles.load(n)
+            out.append({"name": p.name, "k": p.k, "k_measured_at": p.k_measured_at,
+                        "k_source": p.k_source,
+                        "lens_name": p.lens_name, "focal_mm": p.focal_mm,
+                        "aperture": p.aperture, "active": p.name == active})
+        return out
+
+    @app.post("/api/camera/profiles", status_code=201)
+    def new_camera_profile(body: NewCameraProfile) -> dict[str, Any]:
+        return cam_view(rig.camera_profiles.create(body.name, body.copy_from))
+
+    @app.get("/api/camera/profiles/{name}")
+    def camera_profile(name: str) -> dict[str, Any]:
+        return cam_view(rig.camera_profiles.load(name))
+
+    @app.patch("/api/camera/profiles/{name}")
+    def edit_camera_profile(name: str, body: dict[str, Any]) -> dict[str, Any]:
+        """Edit lens, exposure, body, spectral factors. k changes only by calibration."""
+        p = rig.camera_profiles.load(name).edited(body)
+        rig.camera_profiles.save(p)
+        return cam_view(p)
+
+    @app.delete("/api/camera/profiles/{name}")
+    def delete_camera_profile(name: str) -> dict[str, Any]:
+        if len(rig.camera_profiles.names()) <= 1:
+            raise RigError("the last camera profile cannot be deleted")
+        return {"moved_to": rig.camera_profiles.delete(name)}
+
+    @app.post("/api/camera/profiles/{name}/activate")
+    def activate_camera_profile(name: str) -> dict[str, Any]:
+        return cam_view(rig.set_active_camera_profile(name))
+
+    @app.post("/api/camera/profiles/{name}/body")
+    def take_body(name: str) -> dict[str, Any]:
+        """Fill the profile's body serial and lens name from what the camera reports now."""
+        info = rig.camera_info()["info"]
+        p = rig.camera_profiles.load(name).edited({"body_serial": str(info.get("serial") or ""),
+                                                   "lens_name": str(info.get("lens") or "")})
+        rig.camera_profiles.save(p)
+        return cam_view(p)
+
+    @app.get("/api/camera/profiles/{name}/geometry.png")
+    def profile_geometry(name: str) -> Response:
+        import dataclasses
+
+        from photometry.masks import CameraGeometry
+        from photometry.profile import load_analysis_config
+        from report.images import geometry_png
+
+        p = rig.camera_profiles.load(name)
+        cfg = load_analysis_config()
+        cfg = dataclasses.replace(cfg, lens=dataclasses.replace(
+            cfg.lens, focal_mm=p.focal_mm, distortion_k1=p.distortion_k1))
+        b = cfg.processing.binning
+        geom = CameraGeometry.from_config(cfg, (cfg.sensor.height_px // b, cfg.sensor.width_px // b))
+        return Response(geometry_png(geom, cfg.ugr.position_index_cap), media_type="image/png")
+
+    @app.get("/api/camera/info")
+    def camera_info() -> dict[str, Any]:
+        return rig.camera_info()
+
+    @app.post("/api/camera/calibrate")
+    def calibrate(body: Calibrate) -> dict[str, Any]:
+        m = rig.calibrate(body.profile, body.roi, body.luminance, body.lux, body.rho)
+        return motion(m, body.wait)
+
+    @app.get("/api/camera/calibrations")
+    def calibrations(profile: str | None = None) -> list[dict[str, Any]]:
+        return rig.calibrations(profile)
+
+    @app.post("/api/camera/profiles/{name}/accept")
+    def accept(name: str, body: Accept) -> dict[str, Any]:
+        return cam_view(rig.accept_calibration(name, body.calibration))
+
+    @app.post("/api/camera/profiles/{name}/k")
+    def typed_k(name: str, body: TypedK) -> dict[str, Any]:
+        """Type k in by hand, with where it comes from. Replaces the stored k."""
+        return cam_view(rig.set_k(name, body.k, body.note))
+
     # -- studies ------------------------------------------------------------- #
 
     @app.get("/api/studies")
@@ -256,7 +375,7 @@ def create_app(rig: RigController) -> FastAPI:
     @app.post("/api/studies", status_code=201)
     def start_study(body: StartStudy) -> dict[str, Any]:
         m, sid = rig.start_study(body.profile, body.lighting, body.operator, body.notes,
-                                 body.sweep, body.check)
+                                 body.sweep, body.check, body.camera_profile)
         return {"study": sid, "motion": m.summary()}
 
     @app.get("/api/studies/{sid}")

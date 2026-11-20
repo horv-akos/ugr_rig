@@ -328,3 +328,34 @@ table.library { width: 100%; border-collapse: collapse; font-size: 14px; }
 .log time { color: var(--muted); font-variant-numeric: tabular-nums; }
 .log .bad { color: var(--bad); }
 .log .warn { color: var(--warn); }
+
+/* ---- camera page ------------------------------------------------------- */
+
+.camera {
+  display: grid; gap: 12px; padding: 12px; max-width: 1600px; margin: 0 auto; align-items: start;
+  grid-template-columns: minmax(0, 1.4fr) minmax(320px, 1fr);
+  grid-template-areas: "live cal" "prof cal" "log cal";
+}
+.camera .live-panel { grid-area: live; }
+.cal-panel { grid-area: cal; }
+.prof-panel { grid-area: prof; }
+.camera .log-panel { grid-area: log; }
+@media (max-width: 900px) {
+  .camera { grid-template-columns: minmax(0, 1fr); grid-template-areas: "live" "cal" "prof" "log"; padding: 8px; }
+}
+.roi-box { cursor: crosshair; touch-action: none; }
+h2.sub { margin-top: 18px; }
+label.stack { display: grid; gap: 2px; font-size: 12px; color: var(--muted); flex: 1 1 140px; }
+.prof-form { display: grid; gap: 8px; }
+.prof-form label { display: grid; gap: 2px; font-size: 12px; color: var(--muted); }
+.prof-form .two { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.cal-result { margin: 12px 0; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); }
+.cal-result.ok { border-color: #2a5a35; }
+.cal-result.warn { border-color: #6b5420; }
+.cal-result.bad { border-color: #7a2c28; color: var(--bad); }
+.cal-result .kbig { font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.cal-result p { margin: 6px 0; }
+img.geometry { width: 100%; border-radius: 8px; background: var(--bg); }
+.typed-k { display: grid; gap: 8px; justify-items: start; }
+.typed-k .row { width: 100%; }
+label.stack.wide { flex: 2 1 220px; }

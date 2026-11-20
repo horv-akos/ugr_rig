@@ -32,9 +32,10 @@ from hal.config import MountConfig, load_config
 from hal.mount import MountError, MoveResult, NotZeroed, PanTiltMount
 from storage import StudyIndex, StudyStore
 
+from .camera_profiles import CameraProfile, CameraProfileStore, KRecord
 from .liveview import LiveView
-from .positions import (Position, PositionProfile, ProfileStore, check_name, mask_counts,
-                        now_iso)
+from .positions import (Position, PositionProfile, ProfileNotFound, ProfileStore, check_name,
+                        mask_counts, now_iso, slug)
 from .study import LIGHTING, StudyRun, new_record, study_id_for
 
 REPO = Path(__file__).resolve().parents[1]
@@ -98,7 +99,7 @@ class RigController:
                  geometry: dict[str, Any] | None = None) -> None:
         self.mount = mount
         self.live = live or LiveView(None)
-        self.geometry = geometry or camera_geometry()
+        self._geometry = geometry
         self.data_dir = Path(data_dir)
         self.profiles = ProfileStore(self.data_dir / "profiles" / "positions")
         self._state_path = self.data_dir / "state.json"
@@ -110,6 +111,9 @@ class RigController:
         self._speed = 1.0
         self._last_ping = 0.0
         self._last_known = self._read_state()
+        self.camera_profiles = CameraProfileStore(self.data_dir / "profiles" / "camera")
+        self.camera_profiles.ensure_default()
+        self.calibrations_dir = self.data_dir / "calibrations"
         self.studies = StudyStore(self.data_dir / "studies")
         self.index = StudyIndex(self.data_dir / "index.sqlite")
         self._runs: dict[str, StudyRun] = {}
@@ -187,27 +191,165 @@ class RigController:
                                              mp_context=multiprocessing.get_context("spawn"))
         return self._pool
 
-    def processing_setup(self) -> tuple[float | None, dict[str, Any], list[str]]:
-        """(k, config overrides, notes) for analysing this camera's brackets."""
+    def processing_setup(self, camera_profile: str | None = None
+                         ) -> tuple[float | None, dict[str, Any], list[str]]:
+        """(k, config overrides, notes) for analysing brackets shot with `camera_profile`
+        (the active one by default): its lens, k and spectral factors override
+        config/analysis.toml."""
         from photometry.profile import load_analysis_config
 
         cfg = load_analysis_config()
+        prof = self.camera_profile(camera_profile)
+        overrides = prof.analysis_overrides()
+        notes = [f"camera profile {prof.name} ({prof.content_hash[:10]})"]
+        k = prof.k or None
         cam = self.live.camera
         bracket_view = getattr(cam, "bracket_view", None)
         if self.live.source == "sim" and bracket_view is not None:
             w = bracket_view.size[0]
             sensor_mm = cfg.sensor.width_px * cfg.sensor.pixel_pitch_um / 1000
-            pitch = sensor_mm * 1000 / (cfg.processing.binning * w)
-            return (cam.k_true, {"sensor.pixel_pitch_um": pitch, "lens.vignetting_map": ""},
-                    ["simulated camera: k is the simulator's, pixel pitch scaled so its small "
-                     "frames keep the 2000D field of view"])
-        return (cfg.calibration.k or None), {}, []
+            overrides["sensor.pixel_pitch_um"] = sensor_mm * 1000 / (cfg.processing.binning * w)
+            overrides["lens.vignetting_map"] = ""
+            notes.append("simulated camera: pixel pitch scaled so its small frames keep the "
+                         "2000D field of view")
+            if not k:
+                k = cam.k_true
+                overrides["calibration.k"] = k
+                notes.append("simulated camera, profile not calibrated: k is the simulator's")
+        return k, overrides, notes
+
+    # -- camera profiles and calibration ------------------------------------- #
+
+    @property
+    def geometry(self) -> dict[str, Any]:
+        """Field of view of the active camera profile's lens (live-view overlays)."""
+        if self._geometry is not None:
+            return self._geometry
+        p = self.camera_profile()
+        return camera_geometry(p.focal_mm, p.distortion_k1)
+
+    def _active_path(self) -> Path:
+        return self.camera_profiles.root / ".active"
+
+    def camera_profile(self, name: str | None = None) -> CameraProfile:
+        if name is None:
+            try:
+                name = self._active_path().read_text(encoding="utf-8").strip()
+            except OSError:
+                name = ""
+            if name not in self.camera_profiles.names():
+                name = self.camera_profiles.names()[0]
+        return self.camera_profiles.load(name)
+
+    def set_active_camera_profile(self, name: str) -> CameraProfile:
+        p = self.camera_profiles.load(name)
+        self._active_path().write_text(p.name, encoding="utf-8")
+        return p
+
+    def camera_info(self) -> dict[str, Any]:
+        """What the body reports (model, serial, lens, mode...), and how it compares with
+        the active camera profile."""
+        if self.live.camera is None:
+            raise RigError("no camera: start the server with --camera sim or gphoto2")
+        with self._lock:
+            self._require_idle()
+            with self.live.paused() as cam:
+                info = cam.info()
+        prof = self.camera_profile()
+        return {"info": info, "profile": prof.name, "mismatch": prof.body_check(info)}
+
+    def calibrate(self, profile: str, roi: list[float], luminance: float | None = None,
+                  lux: float | None = None, rho: float | None = None) -> Motion:
+        """Shoot a bracket of the matt target and measure k inside `roi` (normalised x0, y0,
+        x1, y1) against the meter: a luminance reading, or illuminance on a panel of
+        reflectance rho (L = rho E / pi). The result is offered, not applied: the operator
+        accepts it into the profile (`accept_calibration`)."""
+        from hal.camera_config import load_camera_config
+        from photometry.calibration import target_luminance
+        from pipeline import study as worker
+
+        prof = self.camera_profiles.load(profile)
+        target = target_luminance(luminance, lux, rho)
+        if not target > 0:
+            raise ValueError("the target luminance must be positive")
+        if len(roi) != 4 or not (0 <= roi[0] < roi[2] <= 1 and 0 <= roi[1] < roi[3] <= 1):
+            raise ValueError("ROI is x0, y0, x1, y1, normalised 0..1 from the top left")
+        with self._lock:
+            self._require_idle()
+            if self.live.camera is None:
+                raise RigError("no camera: start the server with --camera sim or gphoto2")
+            cid = f"{now_iso().replace(':', '').replace('-', '')}-{slug(prof.name)}"
+            d = self.calibrations_dir / cid
+
+            def run(stop: threading.Event) -> dict[str, Any]:
+                with self.live.paused() as cam:
+                    cam.apply_config(prof.camera_config(load_camera_config()))
+                    mismatch = prof.body_check(cam.info())
+                    pan, tilt = self.mount.position()
+                    cam.capture_bracket(d / "bracket", meta={
+                        "region": "calibration target", "pan_deg": round(pan, 4),
+                        "tilt_deg": round(tilt, 4), "calibration": cid})
+                _, overrides, notes = self.processing_setup(prof.name)
+                overrides["calibration.k"] = prof.k     # drift against the stored value only
+                m = self.pool().submit(worker.process_calibration, {
+                    "bracket": str(d / "bracket"), "roi": list(roi), "target_cd_m2": target,
+                    "overrides": overrides}).result()
+                record = {"id": cid, "at": now_iso(), "profile": prof.name,
+                          "profile_hash": prof.content_hash,
+                          "meter": {"luminance": luminance, "lux": lux, "rho": rho},
+                          "measurement": m, "body_mismatch": mismatch, "notes": notes,
+                          "accepted_at": None}
+                (d / "calibration.json").write_text(json.dumps(record, indent=2),
+                                                    encoding="utf-8")
+                return record
+
+            return self._start("calibrate", {"profile": prof.name, "calibration": cid}, run)
+
+    def calibrations(self, profile: str | None = None, limit: int = 20) -> list[dict[str, Any]]:
+        out = []
+        if self.calibrations_dir.is_dir():
+            for f in sorted(self.calibrations_dir.glob("*/calibration.json"), reverse=True):
+                rec = json.loads(f.read_text(encoding="utf-8"))
+                if profile is None or rec["profile"] == profile:
+                    out.append(rec)
+                if len(out) >= limit:
+                    break
+        return out
+
+    def accept_calibration(self, profile: str, calibration: str) -> CameraProfile:
+        """Make a measured k the profile's k. The old value stays in the profile's history."""
+        f = self.calibrations_dir / calibration / "calibration.json"
+        if "/" in calibration or "\\" in calibration or not f.is_file():
+            raise ProfileNotFound(f"no calibration {calibration!r}")
+        rec = json.loads(f.read_text(encoding="utf-8"))
+        if rec["profile"] != profile:
+            raise RigError(f"calibration {calibration} was made with profile {rec['profile']}")
+        m = rec["measurement"]
+        with self._profiles_lock:
+            p = self.camera_profiles.load(profile).with_k(KRecord(
+                at=rec["at"], k=m["k"], target_cd_m2=m["target_cd_m2"], roi=tuple(m["roi"]),
+                cv=m["cv"], drift=m["drift"], calibration=calibration))
+            self.camera_profiles.save(p)
+        rec["accepted_at"] = now_iso()
+        f.write_text(json.dumps(rec, indent=2), encoding="utf-8")
+        return p
+
+    def set_k(self, profile: str, k: float, note: str) -> CameraProfile:
+        """Type k in by hand (no meter at hand). It replaces the stored k, whatever it was;
+        the old value stays in the profile's history."""
+        with self._profiles_lock:
+            p = self.camera_profiles.load(profile).with_typed_k(k, note)
+            self.camera_profiles.save(p)
+        return p
 
     def start_study(self, profile: str, lighting: str, operator: str = "", notes: str = "",
-                    sweep: bool = True, check: bool = True) -> tuple[Motion, str]:
-        """Record a study of every position in `profile`; analysis follows on its own."""
+                    sweep: bool = True, check: bool = True,
+                    camera_profile: str | None = None) -> tuple[Motion, str]:
+        """Record a study of every position in `profile` with `camera_profile` (the active
+        one by default); analysis follows on its own."""
         if lighting not in LIGHTING:
             raise ValueError(f"lighting must be one of {LIGHTING}")
+        cam_prof = self.camera_profile(camera_profile)
         p = self.get_profile(profile)
         if not p.positions:
             raise RigError(f"profile {profile!r} has no positions to record")
@@ -219,8 +361,8 @@ class RigController:
                 raise RigError("no camera: start the server with --camera sim or gphoto2")
             sid = study_id_for(self, p.name)
             run = StudyRun(self, new_record(sid, p, lighting, operator, notes, sweep, check,
-                                            self.software))
-            run.prepare(p)
+                                            self.software, cam_prof))
+            run.prepare(p, cam_prof)
             self._runs[sid] = run
             motion = self._start("study", {"study": sid, "profile": p.name}, run.capture)
         threading.Thread(target=run.analyse, name=f"analysis-{sid}", daemon=True).start()
@@ -238,7 +380,10 @@ class RigController:
         entries = record["positions"] + ([record["check"]] if record.get("check") else [])
         if not any(e.get("bracket") for e in entries):
             raise RigError(f"{study_id} has no recorded brackets to analyse")
-        if not self.processing_setup()[0]:
+        cam_name = (record.get("camera_profile") or {}).get("name")
+        if cam_name not in self.camera_profiles.names():
+            cam_name = None
+        if not self.processing_setup(cam_name)[0]:
             raise RigError("no calibration constant k: calibrate first, then re-analyse")
         run = StudyRun(self, record)
         run.prepare_reanalysis()
@@ -725,18 +870,23 @@ def _disk(path: Path) -> dict[str, float] | None:
     return {"free_gb": round(u.free / 1e9, 1), "total_gb": round(u.total / 1e9, 1)}
 
 
-def camera_geometry() -> dict[str, Any]:
-    """Field of view and lens from config/analysis.toml, for live-view overlays. Nominal: the
-    focal length is a MEASURE placeholder until measured."""
+def camera_geometry(focal_mm: float | None = None, k1: float | None = None) -> dict[str, Any]:
+    """Field of view and lens, for live-view overlays: config/analysis.toml, with a camera
+    profile's focal length and distortion when given. Nominal until the lens is measured."""
+    import dataclasses
+
     from photometry.masks import CameraGeometry
     from photometry.profile import load_analysis_config
 
     cfg = load_analysis_config()
+    if focal_mm is not None:
+        cfg = dataclasses.replace(cfg, lens=dataclasses.replace(
+            cfg.lens, focal_mm=focal_mm, distortion_k1=cfg.lens.distortion_k1 if k1 is None else k1))
     b = cfg.processing.binning
     g = CameraGeometry.from_config(cfg, (cfg.sensor.height_px // b, cfg.sensor.width_px // b))
     fh, fv = g.fov_deg()
     return {"fov_deg": [round(float(fh), 4), round(float(fv), 4)],
-            "focal_mm": cfg.lens.focal_mm, "lens": cfg.lens.name,
+            "focal_mm": cfg.lens.focal_mm, "lens": cfg.lens.name, "k1": cfg.lens.distortion_k1,
             "width_px": g.width, "height_px": g.height}
 
 

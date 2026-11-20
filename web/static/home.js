@@ -16,6 +16,7 @@ if (!(view in VIEWS)) view = "sources_map";
 
 let st = null;            // /api/status
 let profiles = [];
+let camProfiles = [];
 let selected = remember("ugr.study");
 let study = null;
 let studyEtag = "";
@@ -73,6 +74,12 @@ async function loadProfiles() {
       `${p.name}${p.vehicle ? ` · ${p.vehicle}` : ""} (${p.positions} positions)`))
     : [el("option", { value: "" }, "No profiles: record positions on the Movement page")]));
   if (profiles.some((p) => p.name === keep)) sel.value = keep;
+  try { camProfiles = await api("GET", "/api/camera/profiles"); } catch { camProfiles = []; }
+  const cs = $("camprof");
+  const active = (camProfiles.find((p) => p.active) || {}).name;
+  cs.replaceChildren(...camProfiles.map((p) => el("option", { value: p.name },
+    `${p.name} · ${p.k ? `k ${p.k.toPrecision(4)}` : "not calibrated"}`)));
+  if (active) cs.value = active;
 }
 
 function renderPreflight() {
@@ -82,6 +89,7 @@ function renderPreflight() {
     [st.zeroed && st.certain, st.zeroed && !st.certain ? "zero uncertain: set it again" : "zero set"],
     [st.live_view.source !== "none", st.live_view.source === "none" ? "no camera"
       : `camera: ${st.live_view.source === "sim" ? "simulated" : "2000D"}`],
+    camCheck(),
     [!!prof && prof.positions > 0, prof ? `${prof.positions} position(s) in the profile` : "a profile with positions"],
     [st.state === "idle", st.state === "idle" ? "head idle" : `head busy: ${st.state}`],
   ];
@@ -95,6 +103,16 @@ function renderPreflight() {
     + " (a simulated study is a few MB; a real one ~200 MB per position)" : "";
 }
 
+function camCheck() {
+  const c = camProfiles.find((p) => p.name === $("camprof").value);
+  if (!c) return [false, "a camera profile"];
+  if (c.k) return [true, c.k_source === "typed" ? `camera profile: k ${c.k.toPrecision(4)}, typed by hand`
+    : `camera profile calibrated (k ${c.k.toPrecision(4)})`];
+  // Uncalibrated is allowed (the simulator knows its k; a real study is flagged), but shown.
+  return [st.live_view.source === "sim", st.live_view.source === "sim"
+    ? "camera profile not calibrated (the simulator uses its own k)" : "camera profile not calibrated"];
+}
+
 async function start(e) {
   e.preventDefault();
   const f = e.target.elements;
@@ -103,6 +121,7 @@ async function start(e) {
     const r = await api("POST", "/api/studies", {
       profile: f.profile.value, lighting: f.lighting.value, operator: f.operator.value,
       notes: f.notes.value, sweep: f.sweep.checked, check: f.check.checked,
+      camera_profile: f.camera_profile.value || null,
     });
     select(r.study);
     await loadLibrary();
@@ -247,6 +266,7 @@ async function loadLibrary() {
 function wire() {
   $("start-form").addEventListener("submit", start);
   $("profile").addEventListener("change", () => st && renderPreflight());
+  $("camprof").addEventListener("change", () => st && renderPreflight());
   $("stop").addEventListener("click", () => api("POST", "/api/mount/stop").catch((e) => alert(e.message)));
   $("reanalyse").addEventListener("click", async () => {
     if (!study || !confirm("Analyse this study's recorded brackets again? The current results "
