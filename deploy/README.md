@@ -6,14 +6,37 @@ Wiring and power-up order: `docs/CONNECTIONS.md`.
 
 ## 1. OS
 
-Raspberry Pi OS **Lite**, 64-bit. Not the desktop image: its `gvfs-gphoto2-volume-monitor`
-grabs the camera's USB interface, and the camera then reports busy (`CameraBusy`).
+Raspberry Pi OS, 64-bit: Lite, or the desktop image when a screen at the site is wanted.
+Check with `dpkg --print-architecture` (must say `arm64`).
 
-Create the user `ugr` (or change the paths in `ugr-rig.service`), enable SSH.
+Create the user `ugr` (or change the paths in `ugr-rig.service` and the user in
+`ugr-shutdown.sudoers`), enable SSH.
 
 ```
 sudo usermod -aG dialout,plugdev,gpio ugr   # UART, camera USB, GPIO
 ```
+
+### Desktop image only
+
+Its GVFS volume monitors (`gvfs-gphoto2-volume-monitor`, `gvfs-mtp-volume-monitor`) claim
+the camera's USB interface as soon as it is plugged in, and the rig then gets `CameraBusy`.
+Mask them for every user who logs in to the desktop:
+
+```
+sudo systemctl --global mask gvfs-gphoto2-volume-monitor.service gvfs-mtp-volume-monitor.service
+sudo reboot
+pgrep -af 'gvfs.*(gphoto2|mtp)'    # with the camera on: must print nothing
+```
+
+If something still shows up, remove the backends instead: `sudo apt remove gvfs-backends`
+(read what apt wants to take with it before saying yes). Masking stops the desktop from showing
+the camera as a drive; the rig never needs that.
+
+On site the desktop's Chromium opens the pages at `http://localhost:8000/home`. Turn the
+monitor off (or away) while a study records: a lit screen in the cab is a light source and
+reflects in the glazing. If the desktop is only wanted now and then,
+`sudo systemctl set-default multi-user.target` boots to the console, and
+`sudo systemctl start graphical.target` starts the desktop when needed.
 
 ## 2. UART for the drivers
 
@@ -102,6 +125,6 @@ access point it no longer joins your normal network.
   timestamps come from the system clock, so after a cold start they can be wrong until the clock
   is set (e.g. `sudo date -s ...` over SSH). Fixing this properly needs a decision: an RTC module
   (hardware), or the page sending the browser's time to the server.
-- **Shutdown from the UI** is not built yet (it needs a narrow sudoers rule for `shutdown`). Until
-  then: `sudo shutdown now` over SSH before switching the supply off: the SD card corrupts if
-  power goes under a running system.
+- **Joining another WiFi** (from the desktop's network menu, say, for internet time or updates)
+  takes wlan0 off the access point: one radio, one role. `sudo nmcli con up ugr-ap` brings the
+  rig's network back.

@@ -97,8 +97,16 @@ def test_save_refused_where_backlash_cannot_be_taken_up(rig):
     c.post("/api/mount/enable")
     c.post("/api/mount/zero", json={"wait": True})
     c.post("/api/positions", json={"name": "cab"})
-    c.post("/api/mount/jog/start", json={"direction": "left"})  # instant: lands on the limit
-    assert not wait_idle(c)["backlash_ok"]["pan"]
+    c.post("/api/mount/jog/start", json={"direction": "left"})  # runs to the limit
+    # Keep the dead-man fed: on a slow machine (the Pi) the simulated jog outlasts the
+    # heartbeat timeout and would stop short of the limit.
+    deadline = time.monotonic() + 30
+    while c.post("/api/mount/jog/ping").json()["jogging"]:
+        assert time.monotonic() < deadline
+        time.sleep(0.05)
+    st = wait_idle(c)
+    assert st["last_motion"]["stop_reason"] != "heartbeat lost"
+    assert not st["backlash_ok"]["pan"]
     r = c.post("/api/positions/cab/save", json={"name": "edge", "wait": True})
     assert r.status_code == 409 and "soft limit" in r.json()["detail"]
     assert c.get("/api/positions/cab").json()["positions"] == []
