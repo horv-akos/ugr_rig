@@ -90,6 +90,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--host", default="127.0.0.1",
                    help="0.0.0.0 on the Pi to serve its WiFi (default: %(default)s)")
     p.add_argument("--port", type=int, default=8000)
+    p.add_argument("--shutdown-command", default=None,
+                   help="what the page's Shutdown button runs, e.g. \"sudo systemctl poweroff\" "
+                        "(deploy/ugr-rig.service). Without it the button is refused")
     p.add_argument("-v", "--verbose", action="store_true",
                    help="debug logging and one line per HTTP request")
     args = p.parse_args(argv)
@@ -106,7 +109,10 @@ def main(argv: list[str] | None = None) -> int:
     rig = RigController.from_config(args.backend, args.data, args.config, camera=args.camera,
                                     **kwargs)
     try:
-        run_server(create_app(rig), args, rig)
+        import shlex
+
+        cmd = shlex.split(args.shutdown_command) if args.shutdown_command else None
+        run_server(create_app(rig, shutdown_command=cmd), args, rig)
     finally:
         rig.close()  # drivers released on every exit path
         print("rig server stopped, drivers released", flush=True)

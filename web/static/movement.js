@@ -438,6 +438,7 @@ async function loadCoverage() {
 
 function renderProfile() {
   $("delete-profile").disabled = !profile;
+  $("copy-profile").disabled = !profile;
   $("edit-profile").disabled = !profile;
   const info = $("profile-info");
   if (!profile) {
@@ -601,11 +602,15 @@ function wire() {
 
   $("profile").addEventListener("change", loadProfile);
   const form = $("profile-form");
-  const openForm = (editing) => {
+  const openForm = (editing, copying = false) => {
     form.reset();
-    form.dataset.mode = editing ? "edit" : "create";
+    form.dataset.mode = editing ? "edit" : copying ? "copy" : "create";
     form.elements.name.disabled = editing;   // renaming would orphan results that name it
-    $("profile-submit").textContent = editing ? "Save details" : "Create";
+    $("profile-submit").textContent = editing ? "Save details" : copying ? `Copy “${profile.name}”` : "Create";
+    if (copying) {
+      form.elements.vehicle.value = profile.vehicle;
+      form.elements.zero_reference.value = profile.zero_reference;
+    }
     if (editing) {
       form.elements.name.value = profile.name;
       form.elements.vehicle.value = profile.vehicle;
@@ -615,6 +620,7 @@ function wire() {
     (editing ? form.elements.vehicle : form.elements.name).focus();
   };
   $("new-profile").addEventListener("click", () => openForm(false));
+  $("copy-profile").addEventListener("click", () => { if (profile) openForm(false, true); });
   $("edit-profile").addEventListener("click", () => { if (profile) openForm(true); });
   $("cancel-profile").addEventListener("click", () => { form.hidden = true; });
   form.addEventListener("submit", async (e) => {
@@ -626,7 +632,9 @@ function wire() {
       }), `updated “${profile.name}”`)
       : await act(() => api("POST", "/api/positions", {
         name: f.name.value, vehicle: f.vehicle.value, zero_reference: f.zero_reference.value,
-      }), `created profile “${f.name.value}”`);
+        copy_from: form.dataset.mode === "copy" ? profile.name : null,
+      }), form.dataset.mode === "copy" ? `copied “${profile.name}” to “${f.name.value}”`
+        : `created profile “${f.name.value}”`);
     if (r) {
       form.reset();
       form.hidden = true;

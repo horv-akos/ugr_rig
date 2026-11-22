@@ -1,0 +1,3 @@
+# /etc/sudoers.d/ugr-shutdown  (install -m 0440, then `sudo visudo -c`)
+# The rig server's Shutdown button: user ugr may power the Pi off, and nothing else.
+ugr ALL=(root) NOPASSWD: /usr/bin/systemctl poweroff

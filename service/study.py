@@ -455,8 +455,8 @@ class StudyRun:
             self.analysing.clear()
 
     def _write_report(self) -> None:
-        """The Excel workbook, from the folder as it now stands."""
-        self.step("analysis", "running", "Excel workbook")
+        """The Excel workbook and the PDF report, from the folder as it now stands."""
+        self.step("analysis", "running", "Excel workbook and PDF report")
         with self._lock:
             self.study["summary"] = worker.summarise(self.study)
             snapshot = json.loads(json.dumps(self.study, default=str))
@@ -465,14 +465,18 @@ class StudyRun:
             snapshot["status"] = "done"
         snapshot["finished_at"] = snapshot.get("finished_at") or now_iso()
         try:
-            self.rig.pool().submit(worker.write_report,
-                                   {"dir": str(self.dir), "study": snapshot}).result()
-        except Exception as exc:   # noqa: BLE001 - the results stand without the workbook
-            log.warning("Excel report failed: %s", exc)
+            res = self.rig.pool().submit(worker.write_report,
+                                         {"dir": str(self.dir), "study": snapshot}).result()
+        except Exception as exc:   # noqa: BLE001 - the results stand without the reports
+            log.warning("reports failed: %s", exc)
             self.flag(f"Excel workbook could not be written ({exc})")
             return
+        names = {"excel": "Excel workbook", "pdf": "PDF report"}
+        for key, err in res["errors"].items():
+            log.warning("%s failed: %s", names[key], err)
+            self.flag(f"{names[key]} could not be written ({err})")
         with self._lock:
-            self.study.setdefault("outputs", {})["excel"] = "report.xlsx"
+            self.study.setdefault("outputs", {}).update(res["outputs"])
 
     # -- re-analysis ------------------------------------------------------------ #
 
@@ -484,7 +488,7 @@ class StudyRun:
         stamp = now_iso().replace(":", "").replace("-", "")
         old = self.dir / "previous" / stamp
         moved = []
-        for name in ("results", "background.json", "report.xlsx", "forward.json",
+        for name in ("results", "background.json", "report.xlsx", "report.pdf", "forward.json",
                      "coverage.png"):
             src = self.dir / name
             if src.exists():
@@ -504,7 +508,7 @@ class StudyRun:
             st.pop("outputs", None)
             st["flags"] = [f for f in st["flags"] if not f.startswith((
                 "not analysed: no k", "hemisphere sweep could", "sweep covered",
-                "Excel workbook", "no forward gaze", "forward gaze", "forward-gaze"))]
+                "Excel workbook", "PDF report", "no forward gaze", "forward gaze", "forward-gaze"))]
             for e in st["positions"] + ([st["check"]] if st.get("check") else []):
                 e["result"], e["error"] = None, None
                 e["state"] = "captured" if e.get("bracket") else "pending"

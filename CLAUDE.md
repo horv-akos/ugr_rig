@@ -26,7 +26,7 @@ Run everything from the repo root. Python 3.11+ (uses `tomllib`).
 
 ```
 pip install -r requirements.txt
-python -m pytest -q tests/                      # all tests, ~30 s, no hardware
+python -m pytest -q tests/                      # all tests, ~90 s, no hardware
 python -m tools.ugrctl --camera sim selftest    # synthetic cab end to end
 python -m tools.mountctl --backend sim selftest # mount logic against the pulse simulator
 python -m tools.rigctl selftest                 # rig server + API + client, private sim server, ~8 s
@@ -55,7 +55,7 @@ analysis/    detection (ROIs, threshold blobs, reflections in glazing) · backgr
              sensitivity) · spot (fiducial centroid, phase correlation) · forward (all
              positions against the forward gaze, de-duplication, coverage, tiling)
 report/      images.py: photo, luminance, contribution, sources, masks (dark, UGR stamp)
-             · excel.py: the study workbook. PDF not started
+             · excel.py: the study workbook · pdf.py: the study report (matplotlib)
 pipeline/    region.py: one direction, bracket dir -> result dir · study.py: worker-process
              jobs for a study (sweep -> L_b, regions) and its summary · optical.py: live-view
              frames -> optical zero, drift, aim offset; [optical] in mount.toml
@@ -77,8 +77,8 @@ web/         api.py: FastAPI over service/ (/api/...); __main__.py runs it (`pyt
 config/      mount.toml · camera.toml · analysis.toml (also the template for camera profiles)
 deploy/      systemd units (pigpiod, ugr-rig) + Pi setup notes, untried on the Pi
 tools/       mountctl.py (head bench CLI) · ugrctl.py (camera + processing CLI)
-             · rigctl.py (HTTP client of the rig server, stdlib only)
-tests/       pytest
+             · rigctl.py (HTTP client of the rig server, stdlib only; studies too)
+tests/       pytest; conftest.py shares one analysis worker process across the session
 ```
 
 Data flow: `capture_bracket()` writes `frame_NN.cr2` + `manifest.json` into a directory, and
@@ -189,7 +189,8 @@ chain for one position with metrics, report images and the Excel workbook, re-an
 camera profiles and the camera page at `/camera` (k from the target, accepted into the profile;
 a study uses one accepted within 12 h as its calibration shot), optical zero, drift check and
 aim check, lens geometry measured with the head, reflections in the glazing, the forward-gaze
-UGR with coverage and a tiling proposal, `ugrctl`. Not yet run on the real 2000D, on real CR2s, or on
+UGR with coverage and a tiling proposal, the PDF report, the raw zip, the comparison view,
+profile copy, the shutdown button (deploy: sudoers file), `rigctl study`, `ugrctl`. Not yet run on the real 2000D, on real CR2s, or on
 the Pi.
 
 Plan v0.6 is recorded in `REQUIREMENTS.md` (decided 2026-11-19): live view from the camera's own
@@ -198,5 +199,5 @@ windscreen reflections, forward-gaze study rating, report images, metrics, Excel
 
 Next, roughly in order (`REQUIREMENTS.md` §8): camera on the body (`camera info`, one bracket,
 live view); `mountctl drivers` on the bench, then the head measurements; Pi setup per
-`deploy/README.md`; at the desk meanwhile, batch 6: PDF, raw zip, comparison view, shutdown
-button, profile copy, rigctl study commands, test speed. Open items list: `REQUIREMENTS.md` §9.
+`deploy/README.md`. The desk batches 1-6 are done; what is left needs the hardware or a
+decision (`REQUIREMENTS.md` §9: reflection threshold, coverage target, fiducial, RTC).

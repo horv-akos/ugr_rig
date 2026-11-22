@@ -467,8 +467,12 @@ per card (a switcher picks which), each card's top source and threshold sensitiv
 workbook, and re-analysis from the recorded brackets with the previous results kept under
 `previous/`; camera profile selection (2026-11-20, with a preflight line for an uncalibrated
 profile). Since 2026-11-22 the zero step zeros on the fiducial (failed and flagged when it is
-not found), each card shows its aim check and the summary the end-of-session drift. Not built:
-the raw zip, the comparison view and the shutdown button. The calibration step as in §4.2.)
+not found), each card shows its aim check and the summary the end-of-session drift. Also
+2026-11-22: the PDF report, the raw zip (streamed, CR2s stored as they are), the comparison
+view (one position, or the forward gaze, across a profile's studies, oldest first, with a note
+when lighting or the k source differ) and the Shut down button (only when the server is started
+with `--shutdown-command`, as the systemd unit does; refused while the head moves, a study
+records or analysis runs). The calibration step as in §4.2.)
 
 - Select the position profile and the camera profile; set the lighting condition (§3.1), operator
   and notes
@@ -484,7 +488,8 @@ the raw zip, the comparison view and the shutdown button. The calibration step a
 - Downloads: a results zip (images, Excel, CSV, JSON) and a raw zip (CR2s), separately. The raw
   set is ~200 MB per position. Disk space indicator
 
-**Movement calibration** (`/movement`, built 2026-11-19 except profile copy; zero on the
+**Movement calibration** (`/movement`, built 2026-11-19; profile copy (positions, ids,
+reference images, masks, forward gaze) 2026-11-22; zero on the
 fiducial and the zero check since 2026-11-22; coverage map and tiling proposal 2026-11-22)
 
 Saving a position also stores a live-view frame as its reference image. The mask editor draws
@@ -554,7 +559,12 @@ Every study retains:
   Sources, Movement profile, Camera profile, Calibration & QA, Provenance. Contents in §5.6
 - **CSV**: flat results tables, as now
 - **PDF report**: the images and tables above, the calibration record, the zero drift and all
-  parameters
+  parameters. Built 2026-11-22 (`report/pdf.py`, matplotlib's PdfPages, decided 2026-11-22: no
+  new dependency): page 1 the study, its headline numbers and every flag; page 2 the forward
+  gaze with its coverage map and sources; one page per position (source map, luminance and
+  contribution maps, top sources, flags); a provenance page. Written with the workbook; either
+  can fail without the other, and the study is flagged. A4, light background (for print).
+  Short tables on purpose: the workbook carries the full lists
 - Full parameter provenance on every result, including the software version (git commit): a code
   change can change a number too
 
@@ -681,7 +691,7 @@ ugr_rig/
 │                         exports beyond the results zip                      (planned)
 ├── report/               images.py: photo, luminance, contribution, sources, masks,
 │                         UGR stamp; excel.py: the study workbook             (built)
-│                         PDF                                                 (planned)
+│                         pdf.py: the PDF report (matplotlib)                 (built)
 ├── pipeline/             region.py: one direction end to end (built); study.py: worker-process
 │                         jobs for a study (sweep, regions) and its summary   (built)
 │                         optical.py: optical zero, drift, aim, lens tracking (built)
@@ -731,8 +741,8 @@ sim-tested.
    2026-11-22 on the simulator)
 7. Camera calibration page (lens geometry, `k`), validation of the photometry against the target
    and the handheld meter; PDF report (camera profiles, the page and `k` built 2026-11-20 on the
-   simulator; lens geometry by spot tracking 2026-11-22; validation needs the body and the
-   meter)
+   simulator; lens geometry by spot tracking and the PDF 2026-11-22; validation needs the body
+   and the meter)
 
 ---
 

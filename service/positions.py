@@ -25,6 +25,7 @@ import logging
 import math
 import os
 import re
+import shutil
 import tomllib
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
@@ -371,6 +372,28 @@ class ProfileStore:
                                   created_at=stamp, updated_at=stamp)
         self.save(profile)
         return profile
+
+    def copy(self, source: str, name: str, vehicle: str | None = None,
+             zero_reference: str | None = None) -> PositionProfile:
+        """A new profile with every position of `source`, its reference images and masks, and
+        its forward gaze: the next cab of the same model, or the same cab in another
+        configuration. Position ids carry over (masks and results refer to them); the copy
+        is its own profile from then on. The angles only hold if the zero does: same rig
+        placement, same fiducial position (the zero reference says where)."""
+        src = self.load(source)
+        name = check_name(name, "profile")
+        if self._path(name).exists():
+            raise ProfileError(f"a profile named like {name!r} already exists")
+        stamp = now_iso()
+        p = replace(src, name=name, created_at=stamp, updated_at=stamp,
+                    vehicle=src.vehicle if vehicle is None else vehicle.strip(),
+                    zero_reference=(src.zero_reference if zero_reference is None
+                                    else zero_reference.strip()))
+        a, b = self.assets(src.name), self.assets(name)
+        if a.is_dir():
+            shutil.copytree(a, b, dirs_exist_ok=False)
+        self.save(p)
+        return p
 
     def delete(self, name: str) -> Path:
         """Move the profile to `.trash/` rather than deleting it: it may be the only record

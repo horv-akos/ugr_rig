@@ -421,6 +421,53 @@ class RigController:
         run = self._runs.get(study_id)
         return dict(run.study) if run is not None else self.studies.load(study_id)
 
+    def compare(self, profile: str, position: str | None = None) -> dict[str, Any]:
+        """One position (by its stable id), or the forward gaze (`position` None), across
+        every study of a position profile, oldest first: the comparison view. Only studies
+        that got as far as a result are listed; the study's lighting, flags and k source go
+        with each, since two numbers are only comparable when those match."""
+        rows = []
+        for sid in self.studies.ids():
+            try:
+                st = self.studies.load(sid)
+            except (KeyError, ValueError, OSError):
+                continue
+            if st.get("profile", {}).get("name") != profile:
+                continue
+            base = {"study": sid, "started_at": st.get("started_at"),
+                    "lighting": st.get("lighting"), "operator": st.get("operator", ""),
+                    "notes": st.get("notes", ""), "status": st.get("status"),
+                    "k_source": (st.get("camera_profile") or {}).get("k_source"),
+                    "n_flags": len(st.get("flags", [])),
+                    "drift_deg": (st.get("drift") or {}).get("offset_deg")}
+            if position is None:
+                fw = st.get("forward")
+                if not fw:
+                    continue
+                rows.append({**base, "name": "forward gaze", "ugr": fw.get("ugr"),
+                             "category": fw.get("category"), "L_b": fw.get("L_b"),
+                             "coverage": fw.get("coverage"), "lower_bound": fw.get("lower_bound"),
+                             "n_sources": fw.get("n_sources"),
+                             "top": (fw.get("sources") or [{}])[0].get("name"),
+                             "image": (fw.get("outputs") or {}).get("coverage_map")})
+                continue
+            e = next((p for p in st.get("positions", []) if p.get("id") == position), None)
+            r = (e or {}).get("result")
+            if not r:
+                continue
+            top = (r.get("sources") or [{}])[0]
+            rows.append({**base, "name": e["name"], "ugr": r.get("ugr"),
+                         "category": r.get("category"), "L_b": r.get("L_b"),
+                         "lb_method": r.get("lb_method"), "n_sources": r.get("n_sources"),
+                         "top": top.get("name"), "top_share": top.get("share"),
+                         "aim_deg": (e.get("aim") or {}).get("total_deg"),
+                         "n_position_flags": len(r.get("flags", [])),
+                         "image": (r.get("outputs") or {}).get("sources_map")})
+        rows.sort(key=lambda r: r["started_at"] or "")
+        lightings = {r["lighting"] for r in rows}
+        return {"profile": profile, "position": position, "rows": rows,
+                "mixed_lighting": len(lightings) > 1}
+
     def list_studies(self, q: str = "") -> list[dict[str, Any]]:
         return self.index.search(q)
 
@@ -879,8 +926,11 @@ class RigController:
         return d
 
     def create_profile(self, name: str, vehicle: str = "",
-                       zero_reference: str = "") -> PositionProfile:
+                       zero_reference: str = "", copy_from: str | None = None) -> PositionProfile:
         with self._profiles_lock:
+            if copy_from:
+                return self.profiles.copy(copy_from, name, vehicle or None,
+                                          zero_reference or None)
             return self.profiles.create(name, vehicle, zero_reference)
 
     def update_profile(self, name: str, vehicle: str | None = None,

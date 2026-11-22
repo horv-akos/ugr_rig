@@ -23,6 +23,7 @@ Errors come back as `{"error": <type>, "detail": <message>}`:
 from __future__ import annotations
 
 import asyncio
+import time
 from pathlib import Path
 from typing import Any, AsyncIterator, Literal
 
@@ -79,6 +80,7 @@ class NewProfile(BaseModel):
     name: str = Field(min_length=1, max_length=80)
     vehicle: str = Field("", max_length=200)
     zero_reference: str = Field("", max_length=2000)
+    copy_from: str | None = Field(None, max_length=80)   # copy positions, images and masks
 
 
 class EditProfile(BaseModel):
@@ -147,7 +149,14 @@ class Run(BaseModel):
     wait: bool = False
 
 
-def create_app(rig: RigController) -> FastAPI:
+def _chain(first: bytes, rest):
+    yield first
+    yield from rest
+
+
+def create_app(rig: RigController, shutdown_command: list[str] | None = None) -> FastAPI:
+    """`shutdown_command`: what the Shutdown button runs once the rig is safe (on the Pi
+    `sudo systemctl poweroff`, from the systemd unit). None: the button is refused."""
     app = FastAPI(title="UGR rig", version="0.6", docs_url=None, redoc_url=None)
     app.state.rig = rig
 
@@ -438,6 +447,50 @@ def create_app(rig: RigController) -> FastAPI:
     def study_file(sid: str, path: str) -> FileResponse:
         return FileResponse(rig.studies.file(sid, path))
 
+    @app.get("/api/system")
+    def system() -> dict[str, Any]:
+        return {"shutdown": bool(shutdown_command)}
+
+    @app.post("/api/system/shutdown")
+    def shutdown() -> dict[str, Any]:
+        """Power the Pi off cleanly, so the bench supply can be switched off without risking
+        the SD card. Refused while the head moves, a study records, or analysis runs (it
+        would lose the study's results); the drivers are released and the camera closed
+        first, then the command runs a second later, after this answer has gone out."""
+        import subprocess
+        import threading
+
+        if not shutdown_command:
+            raise RigError("shutdown is only offered on the rig (the server was started "
+                           "without --shutdown-command)")
+        st = rig.status()
+        if st["state"] != "idle":
+            raise RigError(f"busy: {st['state']} - stop it first")
+        if st["studies_active"]:
+            raise RigError("analysis is still running: wait for it, or its results are lost")
+        rig.close()
+
+        def later() -> None:
+            time.sleep(1.0)
+            subprocess.Popen(shutdown_command)   # noqa: S603 - fixed at server start
+
+        threading.Thread(target=later, daemon=True).start()
+        return {"shutting_down": True, "command": shutdown_command}
+
+    @app.get("/api/compare")
+    def compare(profile: str, position: str | None = None) -> dict[str, Any]:
+        """One position (id), or the forward gaze (no position), across a profile's studies."""
+        return rig.compare(profile, position)
+
+    @app.get("/api/studies/{sid}/raw.zip")
+    def study_raw_zip(sid: str) -> StreamingResponse:
+        """The recorded brackets, streamed (a real study is GBs)."""
+        stream = rig.studies.raw_zip(sid)
+        first = next(stream)            # raises StudyNotFound now, as a 404, not mid-stream
+        return StreamingResponse(_chain(first, stream), media_type="application/zip",
+                                 headers={"Content-Disposition":
+                                          f'attachment; filename="{sid}-raw.zip"'})
+
     @app.get("/api/studies/{sid}/results.zip")
     def study_zip(sid: str) -> Response:
         return Response(rig.studies.results_zip(sid), media_type="application/zip",
@@ -451,7 +504,8 @@ def create_app(rig: RigController) -> FastAPI:
 
     @app.post("/api/positions", status_code=201)
     def new_profile(body: NewProfile) -> dict[str, Any]:
-        return rig.describe(rig.create_profile(body.name, body.vehicle, body.zero_reference))
+        return rig.describe(rig.create_profile(body.name, body.vehicle, body.zero_reference,
+                                               body.copy_from))
 
     @app.get("/api/positions/{profile}")
     def get_profile(profile: str) -> dict[str, Any]:

@@ -70,9 +70,16 @@ drivers actually hold. If it says a driver does not answer: motor rail on? seria
 
 ```
 sudo cp deploy/ugr-rig.service /etc/systemd/system/
+sudo install -m 0440 deploy/ugr-shutdown.sudoers /etc/sudoers.d/ugr-shutdown
+sudo visudo -c                      # must say the files parse; a broken sudoers locks sudo out
 sudo systemctl daemon-reload && sudo systemctl enable --now ugr-rig
 journalctl -u ugr-rig -f            # prints the URLs it answers on
 ```
+
+The sudoers file lets user `ugr` run exactly `systemctl poweroff` and nothing else: the
+Home page's **Shut down** button. Use it before switching the bench supply off; cutting power
+under a running Pi can corrupt the SD card. The button is refused while the head moves, a
+study records or analysis runs.
 
 ## 7. The Pi's own WiFi
 

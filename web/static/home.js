@@ -155,7 +155,7 @@ async function loadStudy() {
     study = s;
     renderStudy();
     renderCards();
-    if (statusChanged) loadLibrary();
+    if (statusChanged) { loadLibrary(); loadCompare(); }
   } catch (e) {
     if (e.status === 404) { selected = null; remember("ugr.study", ""); }
   }
@@ -224,6 +224,13 @@ function renderStudy() {
   const xlsx = s.outputs && s.outputs.excel;
   $("excel").hidden = !xlsx;
   if (xlsx) $("excel").href = `/api/studies/${seg(s.id)}/files/${xlsx}`;
+  const pdf = s.outputs && s.outputs.pdf;
+  $("pdf").hidden = !pdf;
+  if (pdf) $("pdf").href = `/api/studies/${seg(s.id)}/files/${pdf}`;
+  const nraw = [...s.positions, ...(s.check ? [s.check] : [])].filter((p) => p.bracket).length + (s.sweep.frames || []).length;
+  $("rawzip").hidden = !nraw || s.status === "recording";
+  $("rawzip").href = `/api/studies/${seg(s.id)}/raw.zip`;
+  $("rawzip").textContent = `Raw (.zip, ${nraw} brackets)`;
   $("reanalyse").hidden = !FINAL.has(s.status);
   const n = (s.analyses || []).length;
   $("reanalyse").title = n ? `Analysed ${n + 1} times; earlier results are kept in the study folder`
@@ -281,9 +288,66 @@ async function loadLibrary() {
   el("td", { class: "num muted" }, when(r.started_at)),
   el("td", {}, r.profile), el("td", {}, r.vehicle || "—"), el("td", {}, r.lighting),
   el("td", {}, r.operator || "—"),
+  el("td", { class: `num ${ugrClass(r.ugr_forward)}` }, r.ugr_forward === null ? "—"
+    : `${r.forward_lower_bound ? "≥ " : ""}${fmtUgr(r.ugr_forward)}`),
   el("td", { class: `num ${ugrClass(r.ugr_max)}` }, fmtUgr(r.ugr_max)),
   el("td", {}, r.status + (r.n_flags ? ` · ${r.n_flags} flag(s)` : ""))))
-    : [el("tr", { class: "empty" }, el("td", { colspan: 7 }, $("search").value ? "No study matches." : "No studies yet."))]));
+    : [el("tr", { class: "empty" }, el("td", { colspan: 8 }, $("search").value ? "No study matches." : "No studies yet."))]));
+}
+
+// ---------------------------------------------------------------- compare
+
+async function loadCompareProfiles() {
+  const sel = $("cmp-profile");
+  const keep = sel.value || remember("ugr.cmp.profile");
+  sel.replaceChildren(...(profiles.length ? profiles.map((p) => el("option", { value: p.name }, p.name))
+    : [el("option", { value: "" }, "No profiles")]));
+  if (profiles.some((p) => p.name === keep)) sel.value = keep;
+  await loadComparePositions();
+}
+
+async function loadComparePositions() {
+  const name = $("cmp-profile").value;
+  const sel = $("cmp-position");
+  let prof = null;
+  if (name) { try { prof = await api("GET", `/api/positions/${seg(name)}`); } catch { prof = null; } }
+  const keep = sel.value || remember("ugr.cmp.position") || "";
+  sel.replaceChildren(el("option", { value: "" }, "Forward gaze (study headline)"),
+    ...((prof && prof.positions) || []).map((p) => el("option", { value: p.id }, p.name)));
+  if ([...sel.options].some((o) => o.value === keep)) sel.value = keep;
+  await loadCompare();
+}
+
+async function loadCompare() {
+  const name = $("cmp-profile").value;
+  if (!name) { $("cmp-rows").replaceChildren(); return; }
+  remember("ugr.cmp.profile", name);
+  remember("ugr.cmp.position", $("cmp-position").value);
+  const pos = $("cmp-position").value;
+  let c;
+  try {
+    c = await api("GET", `/api/compare?profile=${encodeURIComponent(name)}${pos ? `&position=${encodeURIComponent(pos)}` : ""}`);
+  } catch (e) { $("cmp-note").textContent = e.message; return; }
+  const ks = new Set(c.rows.map((r) => r.k_source || "simulator"));
+  $("cmp-note").textContent = !c.rows.length ? "No analysed study of this profile has it yet."
+    : [c.mixed_lighting ? "Mixed lighting: dark and daylight results are not comparable." : "",
+      ks.size > 1 ? `k from different sources (${[...ks].join(", ")}): compare with care.` : "",
+      "UGR values are compared, never averaged."].filter(Boolean).join(" ");
+  $("cmp-rows").replaceChildren(...c.rows.map((r) => el("tr", {
+    class: r.study === selected ? "here" : "", tabindex: "0",
+    onclick: () => select(r.study), onkeydown: (e) => { if (e.key === "Enter") select(r.study); },
+  },
+  el("td", {}, r.image ? el("img", { class: "thumb", loading: "lazy", alt: "",
+    src: `/api/studies/${seg(r.study)}/files/${r.image}` }) : ""),
+  el("td", { class: "num muted" }, when(r.started_at)),
+  el("td", {}, r.lighting),
+  el("td", { class: `num ${ugrClass(r.ugr)}` }, `${r.lower_bound ? "≥ " : ""}${fmtUgr(r.ugr)}`),
+  el("td", {}, r.category || "—"),
+  el("td", { class: "num" }, r.L_b === null || r.L_b === undefined ? "—" : r.L_b.toFixed(2)),
+  el("td", {}, r.top ? `${r.top}${r.top_share !== undefined && r.top_share !== null ? ` (${Math.round(100 * r.top_share)} %)` : ""}` : "—"),
+  el("td", { class: "muted" }, pos ? (r.aim_deg === null || r.aim_deg === undefined ? "—" : `aim ${r.aim_deg.toFixed(2)}°`)
+    : `${Math.round(100 * (r.coverage || 0))} % covered`),
+  el("td", {}, `${r.n_flags}${r.drift_deg !== null && r.drift_deg !== undefined ? ` · drift ${r.drift_deg.toFixed(2)}°` : ""}`))));
 }
 
 // ---------------------------------------------------------------- wiring
@@ -291,6 +355,19 @@ async function loadLibrary() {
 function wire() {
   $("start-form").addEventListener("submit", start);
   $("profile").addEventListener("change", () => st && renderPreflight());
+  $("cmp-profile").addEventListener("change", loadComparePositions);
+  api("GET", "/api/system").then((s) => { $("shutdown").hidden = !s.shutdown; }).catch(() => {});
+  $("shutdown").addEventListener("click", async () => {
+    if (!confirm("Shut the rig down? The drivers are released (the head can then be moved by hand, "
+      + "so the zero is lost) and the Pi powers off. Switch the supply off once its green LED stops.")) return;
+    try {
+      await api("POST", "/api/system/shutdown");
+      document.body.replaceChildren(el("main", { class: "panel", style: "margin: 40px auto; max-width: 520px" },
+        el("h2", {}, "The rig is shutting down"),
+        el("p", {}, "Wait until the Pi's green LED has stopped flashing, then switch the bench supply off.")));
+    } catch (e) { alert(e.message); }
+  });
+  $("cmp-position").addEventListener("change", loadCompare);
   $("camprof").addEventListener("change", () => st && renderPreflight());
   $("stop").addEventListener("click", () => api("POST", "/api/mount/stop").catch((e) => alert(e.message)));
   $("reanalyse").addEventListener("click", async () => {
@@ -321,6 +398,7 @@ async function main() {
   wire();
   await loadProfiles();
   await loadLibrary();
+  await loadCompareProfiles();
   if (selected) loadStudy();
   poll();
 }

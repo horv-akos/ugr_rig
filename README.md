@@ -59,13 +59,13 @@ ugr_rig/
 ├── config/       mount.toml · camera.toml · analysis.toml — rig constants, and the template
 │                 for camera profiles
 ├── tools/        mountctl.py (head bench) · ugrctl.py (camera, calibration, processing)
-│                 · rigctl.py (client of the rig server: jog, goto, zero, positions)
+│                 · rigctl.py (client of the rig server: jog, goto, zero, positions, studies)
 ├── photometry/   profile · linearise · hdr · calibration · masks (built)
 ├── analysis/     detection incl. reflections · background · ugr · forward gaze (built)
 ├── service/      owns the mount and camera: motions, jog heartbeat, positions, live view (built)
 │                 · session sequence, analysis worker, camera profiles (built)
 ├── storage/      data directory, profiles, SQLite index, study archive, exports
-├── report/       images (photo, maps, boxes, masks, UGR stamp) · Excel (built) · PDF
+├── report/       images (photo, maps, boxes, masks, UGR stamp) · Excel · PDF (built)
 ├── pipeline/     region · study · optical: zero, drift, aim, lens tracking (built) · recovery
 ├── tests/        pytest: camera control flow against a fake libgphoto2, synthetic end to end
 └── web/          FastAPI: HTTP API, live view, movement, home and camera pages (built)
@@ -94,6 +94,10 @@ python -m tools.rigctl mount zero
 python -m tools.rigctl mount left 2    # right / up / down; goto PAN TILT; speed 0.5
 python -m tools.rigctl mount jog       # interactive, arrow keys
 python -m tools.rigctl positions new truck-a && python -m tools.rigctl positions save truck-a dash
+python -m tools.rigctl positions copy truck-a truck-b      # same positions, images and masks
+python -m tools.rigctl study start truck-a --lighting dark --wait
+python -m tools.rigctl study list
+python -m tools.rigctl study download <id> pdf            # results | raw | pdf | excel
 ```
 
 Once it is listening, the server prints the URLs it can be opened on: with `--host 0.0.0.0`
@@ -117,7 +121,8 @@ where to point the laptop's browser. Bound to 127.0.0.1 over SSH it says how to 
 | Measure the built head (`docs/PIVOT_DETAIL.md` §8) | After assembly |
 | `storage` + session sequence + analysis worker (`service/study.py`, `pipeline/study.py`) | **Built**, sim-tested; optical zero, aim check and drift check (2026-11-22); calibration shot from an accepted calibration within 12 h |
 | Reflections in detection, forward-gaze combination, coverage and tiling | **Built**, sim-tested (2026-11-22); reflection threshold and coverage target are starting values |
-| `report`: photo, contribution map, source map, masks, UGR stamp, Excel; re-analysis | **Built**, sim-tested; CR2 photo untested; PDF not started |
+| `report`: photo, contribution map, source map, masks, UGR stamp, Excel, PDF; re-analysis | **Built**, sim-tested; CR2 photo untested |
+| Home: raw zip, comparison view, shutdown button; profile copy; `rigctl study` commands | **Built**, sim-tested (2026-11-22); shutdown untried on the Pi |
 | `web`: movement calibration page, reference images, mask editor, zero on the fiducial, zero check, coverage map and tiling proposal | **Built**, sim-tested |
 | `web`: home page (start a study, steps, results, library, zip) | **Built**, sim-tested |
 | `web`: camera page: camera profiles, `k` from the target, estimated from the ISO rating, or typed in, `k` history, lens geometry maps | **Built**, sim-tested; lens geometry by spot tracking built 2026-11-22; vignetting not started |

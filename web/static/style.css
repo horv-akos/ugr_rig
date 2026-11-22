@@ -241,14 +241,16 @@ table.positions { width: 100%; border-collapse: collapse; font-size: 14px; }
 .home {
   display: grid; gap: 12px; padding: 12px; max-width: 1600px; margin: 0 auto; align-items: start;
   grid-template-columns: minmax(300px, 1fr) minmax(0, 2fr);
-  grid-template-areas: "start run" "results results" "library library";
+  grid-template-areas: "start run" "results results" "library library" "compare compare";
 }
 .start-panel { grid-area: start; }
 .run-panel { grid-area: run; }
 .results-panel { grid-area: results; }
 .library-panel { grid-area: library; }
+.compare-panel { grid-area: compare; }
+img.thumb { width: 96px; border-radius: 4px; display: block; }
 @media (max-width: 900px) {
-  .home { grid-template-columns: minmax(0, 1fr); grid-template-areas: "start" "run" "results" "library"; padding: 8px; }
+  .home { grid-template-columns: minmax(0, 1fr); grid-template-areas: "start" "run" "results" "library" "compare"; padding: 8px; }
 }
 
 .start-form { display: grid; gap: 10px; }

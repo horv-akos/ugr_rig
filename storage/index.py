@@ -13,7 +13,8 @@ from pathlib import Path
 from typing import Any
 
 COLUMNS = ("id", "started_at", "finished_at", "status", "profile", "vehicle", "lighting",
-           "operator", "notes", "n_positions", "ugr_max", "n_flags")
+           "operator", "notes", "n_positions", "ugr_max", "n_flags", "ugr_forward",
+           "forward_lower_bound")
 
 
 class StudyIndex:
@@ -22,10 +23,16 @@ class StudyIndex:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
         self._db = sqlite3.connect(self.path, check_same_thread=False)
+        # Only a search index over the study folders, rebuilt at every start: a new column
+        # needs no migration, the table is simply made again.
+        cols = [r[1] for r in self._db.execute("PRAGMA table_info(studies)")]
+        if cols and tuple(cols) != COLUMNS:
+            self._db.execute("DROP TABLE studies")
         self._db.execute(
             "CREATE TABLE IF NOT EXISTS studies (id TEXT PRIMARY KEY, started_at TEXT, "
             "finished_at TEXT, status TEXT, profile TEXT, vehicle TEXT, lighting TEXT, "
-            "operator TEXT, notes TEXT, n_positions INTEGER, ugr_max REAL, n_flags INTEGER)")
+            "operator TEXT, notes TEXT, n_positions INTEGER, ugr_max REAL, n_flags INTEGER, "
+            "ugr_forward REAL, forward_lower_bound INTEGER)")
         self._db.commit()
 
     def close(self) -> None:
@@ -38,7 +45,8 @@ class StudyIndex:
         return (study["id"], study.get("started_at"), study.get("finished_at"),
                 study.get("status"), study["profile"]["name"], study["profile"].get("vehicle", ""),
                 study.get("lighting"), study.get("operator", ""), study.get("notes", ""),
-                len(study.get("positions", [])), s.get("ugr_max"), len(study.get("flags", [])))
+                len(study.get("positions", [])), s.get("ugr_max"), len(study.get("flags", [])),
+                s.get("forward_ugr"), int(bool(s.get("forward_lower_bound"))))
 
     def upsert(self, study: dict[str, Any]) -> None:
         with self._lock:

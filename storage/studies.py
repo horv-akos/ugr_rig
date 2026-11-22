@@ -20,7 +20,7 @@ import re
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,120}$")
 
@@ -78,6 +78,48 @@ class StudyStore:
         if base not in target.parents or not target.is_file():
             raise StudyNotFound(f"{study_id}: no file {rel!r}")
         return target
+
+    def raw_zip(self, study_id: str, chunk: int = 1 << 20) -> Iterator[bytes]:
+        """The recorded brackets (CR2s, manifests) and study.json as a zip, streamed: a real
+        study is ~200 MB per position, more than the Pi should hold in memory or copy to
+        the card first. Stored, not deflated: CR2s are compressed already. The zip is
+        written to a sink that hands each piece on as it is written."""
+        base = self.path(study_id)
+        if not (base / "study.json").is_file():
+            raise StudyNotFound(f"no study {study_id!r}")
+        files = [base / "study.json"] + sorted(
+            f for f in (base / "brackets").rglob("*") if f.is_file())             if (base / "brackets").is_dir() else [base / "study.json"]
+
+        class Sink(io.RawIOBase):
+            def __init__(self) -> None:
+                self.parts: list[bytes] = []
+                self.pos = 0
+
+            def writable(self) -> bool:
+                return True
+
+            def write(self, b) -> int:
+                self.parts.append(bytes(b))
+                self.pos += len(b)
+                return len(b)
+
+            def tell(self) -> int:
+                return self.pos
+
+            def take(self) -> bytes:
+                out, self.parts = b"".join(self.parts), []
+                return out
+
+        sink = Sink()
+        with zipfile.ZipFile(sink, "w", zipfile.ZIP_STORED, allowZip64=True) as z:
+            for f in files:
+                info = zipfile.ZipInfo.from_file(f, f"{study_id}/{f.relative_to(base).as_posix()}")
+                with f.open("rb") as src, z.open(info, "w", force_zip64=True) as dst:
+                    while block := src.read(chunk):
+                        dst.write(block)
+                        yield sink.take()
+                yield sink.take()
+        yield sink.take()
 
     def results_zip(self, study_id: str) -> bytes:
         """Everything but the raw brackets and the luminance arrays: what a report needs.

@@ -242,7 +242,10 @@ many positions are over 19 and 22, and the check's UGR difference. Folder layout
 | `result.json` | All of the above plus metrics (percentiles, fraction above threshold, threshold sensitivity), flags, merge statistics and frame-to-frame ratios, geometry, and the full provenance: frame hashes, capture settings, k, weights, masks, analysis config |
 
 Every image is dark and carries the position's UGR, category, position and study in a corner,
-with a warning mark when the result has flags. A study adds `report.xlsx` (`report/excel.py`).
+with a warning mark when the result has flags. A study adds `report.xlsx` (`report/excel.py`),
+`report.pdf` (`report/pdf.py`), `forward.json` and `coverage.png` (the forward gaze). The home
+page downloads the results zip (everything but the brackets and `.npy` arrays) and the raw zip
+(the brackets, streamed); `rigctl study download ID results|raw|pdf|excel` does the same.
 
 ---
 

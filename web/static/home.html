@@ -43,6 +43,7 @@
       <button type="submit" id="start" class="primary big">Start recording</button>
       <p class="hint" id="disk"></p>
     </form>
+    <button id="shutdown" class="quiet" hidden title="Power the Pi off cleanly before switching the bench supply off">Shut down the rig</button>
   </section>
 
   <section class="panel run-panel" aria-label="Study">
@@ -62,8 +63,10 @@
       <ul id="study-flags" class="flags"></ul>
       <div class="row">
         <button id="stop" class="stop" hidden>STOP recording</button>
+        <a id="pdf" class="button" download hidden>PDF report</a>
         <a id="excel" class="button" download hidden>Excel workbook</a>
         <a id="zip" class="button" download>Results (.zip)</a>
+        <a id="rawzip" class="button quiet" download title="The recorded brackets (CR2): ~200 MB per position">Raw (.zip)</a>
         <button id="reanalyse" class="quiet" hidden>Re-analyse</button>
       </div>
     </div>
@@ -85,8 +88,25 @@
     <div class="table-wrap">
       <table class="library">
         <thead><tr><th>Started (UTC)</th><th>Profile</th><th>Vehicle</th><th>Lighting</th>
-          <th>Operator</th><th class="num">Max UGR</th><th>Status</th></tr></thead>
+          <th>Operator</th><th class="num">Forward</th><th class="num">Max UGR</th><th>Status</th></tr></thead>
         <tbody id="library-rows"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="panel compare-panel" aria-label="Compare">
+    <h2>Compare</h2>
+    <div class="row">
+      <select id="cmp-profile" aria-label="Position profile"></select>
+      <select id="cmp-position" aria-label="Position"></select>
+    </div>
+    <p class="hint" id="cmp-note"></p>
+    <div class="table-wrap">
+      <table class="library">
+        <thead><tr><th></th><th>Started (UTC)</th><th>Lighting</th><th class="num">UGR</th>
+          <th>Category</th><th class="num">L_b</th><th>Top source</th><th>Check</th>
+          <th>Flags</th></tr></thead>
+        <tbody id="cmp-rows"></tbody>
       </table>
     </div>
   </section>

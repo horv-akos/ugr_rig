@@ -47,6 +47,13 @@ PING_S = 0.1                     # well inside the server's 0.3 s heartbeat time
 NUDGE_STEPS = (0.1, 1.0, 5.0)
 
 
+def _quote(path: str) -> str:
+    """Quote a path (profile names have spaces), but leave a query string as built:
+    its values are quoted by the caller."""
+    base, sep, query = path.partition("?")
+    return urllib.parse.quote(base) + sep + query
+
+
 class RigCtlError(RuntimeError):
     pass
 
@@ -64,7 +71,7 @@ class Client:
     def call(self, method: str, path: str, body: dict | None = None) -> Any:
         data = None if body is None else json.dumps(body).encode("utf-8")
         req = urllib.request.Request(
-            self.url + urllib.parse.quote(path), data=data, method=method,
+            self.url + _quote(path), data=data, method=method,
             headers={"Content-Type": "application/json"} if data else {})
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:
@@ -91,6 +98,22 @@ class Client:
 
     def delete(self, path: str) -> Any:
         return self.call("DELETE", path)
+
+    def download(self, path: str, dest: Path) -> int:
+        """Stream a file (a raw zip can be GBs) to `dest`; returns the bytes written."""
+        req = urllib.request.Request(self.url + _quote(path))
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp, \
+                    open(dest, "wb") as out:
+                n = 0
+                while block := resp.read(1 << 20):
+                    out.write(block)
+                    n += len(block)
+                return n
+        except urllib.error.HTTPError as exc:
+            raise RigCtlError(f"HTTP {exc.code} from {path}") from None
+        except urllib.error.URLError as exc:
+            raise RigCtlError(f"no rig server at {self.url} ({exc.reason})") from None
 
 
 def motion_line(m: dict | None) -> str:
@@ -210,6 +233,135 @@ def cmd_pos_new(c: Client, args) -> int:
     p = c.post("/api/positions", {"name": args.profile, "vehicle": args.vehicle,
                                   "zero_reference": args.zero_ref})
     print(f"created {p['name']}")
+    return 0
+
+
+def cmd_pos_copy(c: Client, args) -> int:
+    p = c.post("/api/positions", {"name": args.new, "copy_from": args.profile,
+                                  "vehicle": args.vehicle or "", "zero_reference": ""})
+    print(f"copied {args.profile} to {p['name']}: {len(p['positions'])} positions")
+    return 0
+
+
+# --------------------------------------------------------------------------- #
+# studies
+# --------------------------------------------------------------------------- #
+
+
+def _ugr(v) -> str:
+    return "-" if v is None else f"{v:.1f}"
+
+
+def study_lines(st: dict) -> list[str]:
+    sm, fw = st.get("summary") or {}, st.get("forward")
+    out = [f"{st['id']}  {st['status']}  {st['profile']['name']}  {st['lighting']}  "
+           f"started {st['started_at']}"]
+    for s in st["steps"]:
+        out.append(f"  {s['state']:<8} {s['label']:<18} {s['detail']}")
+    if fw:
+        out.append(f"forward gaze UGR {'>= ' if fw.get('lower_bound') else ''}{_ugr(fw.get('ugr'))}"
+                   f" ({fw.get('category')}), {100 * fw['coverage']:.0f} % covered, "
+                   f"{fw['n_sources']} source(s)")
+    for p in st["positions"] + ([st["check"]] if st.get("check") else []):
+        r = p.get("result")
+        out.append(f"  {p['name']:<24} " + (f"UGR {_ugr(r.get('ugr'))} ({r.get('category')}), "
+                                             f"{r.get('n_sources')} source(s)" if r
+                                             else p.get("error") or p.get("state", "")))
+    if sm.get("ugr_max") is not None:
+        out.append(f"highest (camera axis) {_ugr(sm['ugr_max'])} at {sm['ugr_max_position']}")
+    for f in st.get("flags", []):
+        out.append(f"  flag: {f}")
+    return out
+
+
+def _follow(c: Client, sid: str, timeout: float) -> dict:
+    """Print each step as it changes until the study has finished."""
+    seen: dict[str, str] = {}
+    deadline = time.monotonic() + timeout
+    while True:
+        st = c.get(f"/api/studies/{sid}")
+        for s in st["steps"]:
+            key = f"{s['state']}|{s['detail']}"
+            if seen.get(s["key"]) != key:
+                seen[s["key"]] = key
+                if s["state"] != "pending":
+                    print(f"  {s['state']:<8} {s['label']:<18} {s['detail']}", flush=True)
+        if st["status"] in ("done", "failed", "stopped", "interrupted"):
+            return st
+        if time.monotonic() > deadline:
+            raise RigCtlError(f"{sid} still {st['status']} after {timeout:.0f} s")
+        time.sleep(0.5)
+
+
+def cmd_study_start(c: Client, args) -> int:
+    body = {"profile": args.profile, "lighting": args.lighting, "operator": args.operator,
+            "notes": args.notes, "sweep": not args.no_sweep, "check": not args.no_check}
+    if args.camera_profile:
+        body["camera_profile"] = args.camera_profile
+    sid = c.post("/api/studies", body)["study"]
+    print(f"started {sid}")
+    if args.wait:
+        st = _follow(c, sid, args.timeout)
+        print("\n".join(study_lines(st)[len(st["steps"]) + 1:]))
+        return 0 if st["status"] == "done" else 1
+    return 0
+
+
+def cmd_study_list(c: Client, args) -> int:
+    rows = c.get(f"/api/studies?q={urllib.parse.quote(args.query or '')}")
+    if not rows:
+        print("no studies")
+    for r in rows:
+        fw = "-" if r.get("ugr_forward") is None else \
+            f"{'>=' if r.get('forward_lower_bound') else ''}{r['ugr_forward']:.1f}"
+        print(f"{r['id']:<28} {r['status']:<10} {r['lighting']:<8} forward {fw:>6}  "
+              f"max {_ugr(r['ugr_max']):>5}  {r['n_flags']} flag(s)")
+    return 0
+
+
+def cmd_study_show(c: Client, args) -> int:
+    st = c.get(f"/api/studies/{args.study}")
+    print(json.dumps(st, indent=2) if args.json else "\n".join(study_lines(st)))
+    return 0
+
+
+def cmd_study_wait(c: Client, args) -> int:
+    st = _follow(c, args.study, args.timeout)
+    print(f"{args.study} {st['status']}")
+    return 0 if st["status"] == "done" else 1
+
+
+def cmd_study_reanalyse(c: Client, args) -> int:
+    c.post(f"/api/studies/{args.study}/reanalyse")
+    print(f"re-analysing {args.study}")
+    if args.wait:
+        st = _follow(c, args.study, args.timeout)
+        return 0 if st["status"] == "done" else 1
+    return 0
+
+
+def cmd_study_download(c: Client, args) -> int:
+    st = c.get(f"/api/studies/{args.study}")
+    outs = st.get("outputs") or {}
+    paths = {"results": f"/api/studies/{args.study}/results.zip",
+             "raw": f"/api/studies/{args.study}/raw.zip",
+             "pdf": f"/api/studies/{args.study}/files/{outs['pdf']}" if outs.get("pdf") else None,
+             "excel": f"/api/studies/{args.study}/files/{outs['excel']}" if outs.get("excel") else None}
+    if not paths[args.what]:
+        raise RigCtlError(f"{args.study} has no {args.what} (not analysed yet?)")
+    names = {"results": f"{args.study}.zip", "raw": f"{args.study}-raw.zip",
+             "pdf": f"{args.study}.pdf", "excel": f"{args.study}.xlsx"}
+    dest = Path(args.output or names[args.what])
+    n = c.download(paths[args.what], dest)
+    print(f"{dest}  {n / 1e6:.1f} MB")
+    return 0
+
+
+def cmd_shutdown(c: Client, args) -> int:
+    if not args.yes:
+        raise RigCtlError("this powers the Pi off: add --yes")
+    c.post("/api/system/shutdown")
+    print("the rig is shutting down: switch the supply off once the Pi's green LED is still")
     return 0
 
 
@@ -545,6 +697,16 @@ def cmd_selftest(args) -> int:
         check("reorder", [x["name"] for x in p["positions"]] == ["roof", "dash"])
         p = c.post("/api/positions/selftest cab/gaze")
         check("forward gaze recorded", p["forward_gaze"] is not None)
+        q = c.post("/api/positions", {"name": "selftest copy", "copy_from": "selftest cab"})
+        check("copy keeps positions, ids and the gaze",
+              [(x["name"], x["id"]) for x in q["positions"]]
+              == [(x["name"], x["id"]) for x in p["positions"]]
+              and q["forward_gaze"] == p["forward_gaze"])
+        ok, why = refused(lambda: c.post("/api/positions", {"name": "selftest copy",
+                                                           "copy_from": "selftest cab"}),
+                          "ProfileError")
+        check("copy refuses an existing name", ok, why)
+        c.delete("/api/positions/selftest copy")
         ok, why = refused(lambda: c.get("/api/positions/no such cab"), "ProfileNotFound")
         check("unknown profile is a 404", ok, why)
         out = c.delete("/api/positions/selftest cab")
@@ -628,6 +790,11 @@ def main(argv: list[str] | None = None) -> int:
     x.add_argument("--vehicle", default="")
     x.add_argument("--zero-ref", default="", help="where the fiducial is, how the rig sits")
     x.set_defaults(fn=cmd_pos_new)
+    x = pos.add_parser("copy", help="a new profile with these positions, images and masks")
+    x.add_argument("profile")
+    x.add_argument("new")
+    x.add_argument("--vehicle", default=None)
+    x.set_defaults(fn=cmd_pos_copy)
     x = pos.add_parser("save", help="record the current pose (backlash taken up first)")
     x.add_argument("profile")
     x.add_argument("name")
@@ -653,6 +820,44 @@ def main(argv: list[str] | None = None) -> int:
     x.add_argument("--dwell", type=float, default=0.0, help="seconds at each position")
     x.add_argument("--speed", type=float, default=None)
     x.set_defaults(fn=cmd_pos_run)
+
+    sd = sub.add_parser("study", help="record, follow and fetch studies").add_subparsers(
+        dest="scmd", required=True)
+    x = sd.add_parser("start", help="record a study of every position in a profile")
+    x.add_argument("profile")
+    x.add_argument("--lighting", choices=("dark", "daylight"), required=True)
+    x.add_argument("--operator", default="")
+    x.add_argument("--notes", default="")
+    x.add_argument("--camera-profile", default=None)
+    x.add_argument("--no-sweep", action="store_true", help="L_b from each frame (provisional)")
+    x.add_argument("--no-check", action="store_true", help="no repeat of the first position")
+    x.add_argument("--wait", action="store_true", help="follow it to the end")
+    x.add_argument("--timeout", type=float, default=7200)
+    x.set_defaults(fn=cmd_study_start)
+    x = sd.add_parser("list")
+    x.add_argument("query", nargs="?", default="")
+    x.set_defaults(fn=cmd_study_list)
+    x = sd.add_parser("show")
+    x.add_argument("study")
+    x.add_argument("--json", action="store_true")
+    x.set_defaults(fn=cmd_study_show)
+    x = sd.add_parser("wait", help="follow a running study to the end")
+    x.add_argument("study")
+    x.add_argument("--timeout", type=float, default=7200)
+    x.set_defaults(fn=cmd_study_wait)
+    x = sd.add_parser("reanalyse", help="analyse the recorded brackets again")
+    x.add_argument("study")
+    x.add_argument("--wait", action="store_true")
+    x.add_argument("--timeout", type=float, default=7200)
+    x.set_defaults(fn=cmd_study_reanalyse)
+    x = sd.add_parser("download")
+    x.add_argument("study")
+    x.add_argument("what", choices=("results", "raw", "pdf", "excel"))
+    x.add_argument("-o", "--output", default=None)
+    x.set_defaults(fn=cmd_study_download)
+    x = sub.add_parser("shutdown", help="power the Pi off cleanly (only on the rig)")
+    x.add_argument("--yes", action="store_true")
+    x.set_defaults(fn=cmd_shutdown)
 
     args = p.parse_args(argv)
     if getattr(args, "selftest", False):

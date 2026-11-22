@@ -13,7 +13,8 @@ Wants=network-online.target
 User=ugr
 Group=ugr
 WorkingDirectory=/home/ugr/ugr_rig
-ExecStart=/home/ugr/ugr_rig/.venv/bin/python -m web --backend pigpio --camera gphoto2 --host 0.0.0.0 --port 8000 --data /home/ugr/ugr_data
+ExecStart=/home/ugr/ugr_rig/.venv/bin/python -m web --backend pigpio --camera gphoto2 --host 0.0.0.0 --port 8000 --data /home/ugr/ugr_data --shutdown-command "sudo -n /usr/bin/systemctl poweroff"
+# The page's Shutdown button runs that; it needs deploy/ugr-shutdown.sudoers (README §6).
 # On stop the server cuts any motion and releases the drivers (rig.close()).
 TimeoutStopSec=15
 Restart=on-failure

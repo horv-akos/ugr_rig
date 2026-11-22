@@ -125,10 +125,17 @@ def process_calibration(job: dict[str, Any]) -> dict[str, Any]:
     return d
 
 
-def write_report(job: dict[str, Any]) -> str:
-    from report import excel
+def write_report(job: dict[str, Any]) -> dict[str, str]:
+    """The workbook and the PDF. Either can fail without the other."""
+    from report import excel, pdf
 
-    return str(excel.write(job["dir"], job["study"]))
+    out, errors = {}, {}
+    for key, mod in (("excel", excel), ("pdf", pdf)):
+        try:
+            out[key] = Path(mod.write(job["dir"], job["study"])).name
+        except Exception as exc:  # noqa: BLE001 - reported per file
+            errors[key] = f"{type(exc).__name__}: {exc}"
+    return {"outputs": out, "errors": errors}
 
 
 def summarise(study: dict[str, Any]) -> dict[str, Any]:
