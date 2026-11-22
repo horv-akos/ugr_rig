@@ -61,7 +61,7 @@ ugr_rig/
 ├── tools/        mountctl.py (head bench) · ugrctl.py (camera, calibration, processing)
 │                 · rigctl.py (client of the rig server: jog, goto, zero, positions)
 ├── photometry/   profile · linearise · hdr · calibration · masks (built)
-├── analysis/     detection · background · ugr (built) · reflections, forward gaze (planned)
+├── analysis/     detection incl. reflections · background · ugr · forward gaze (built)
 ├── service/      owns the mount and camera: motions, jog heartbeat, positions, live view (built)
 │                 · session sequence, analysis worker, camera profiles (built)
 ├── storage/      data directory, profiles, SQLite index, study archive, exports
@@ -116,9 +116,9 @@ where to point the laptop's browser. Bound to 127.0.0.1 over SSH it says how to 
 | Jog, nudge, speed and controlled stop in `hal/mount.py`; `service/` + HTTP API; `rigctl` | **Built**, sim-tested; not yet on hardware |
 | Measure the built head (`docs/PIVOT_DETAIL.md` §8) | After assembly |
 | `storage` + session sequence + analysis worker (`service/study.py`, `pipeline/study.py`) | **Built**, sim-tested; optical zero, aim check and drift check (2026-11-22); calibration shot from an accepted calibration within 12 h |
-| Reflections in detection, forward-gaze combination | Not started |
+| Reflections in detection, forward-gaze combination, coverage and tiling | **Built**, sim-tested (2026-11-22); reflection threshold and coverage target are starting values |
 | `report`: photo, contribution map, source map, masks, UGR stamp, Excel; re-analysis | **Built**, sim-tested; CR2 photo untested; PDF not started |
-| `web`: movement calibration page, reference images, mask editor, zero on the fiducial, zero check | **Built**, sim-tested; tiling and coverage map to come |
+| `web`: movement calibration page, reference images, mask editor, zero on the fiducial, zero check, coverage map and tiling proposal | **Built**, sim-tested |
 | `web`: home page (start a study, steps, results, library, zip) | **Built**, sim-tested |
 | `web`: camera page: camera profiles, `k` from the target, estimated from the ISO rating, or typed in, `k` history, lens geometry maps | **Built**, sim-tested; lens geometry by spot tracking built 2026-11-22; vignetting not started |
 

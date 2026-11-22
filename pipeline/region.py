@@ -132,10 +132,12 @@ def evaluate_region(bracket_dir: str | Path, out_dir: str | Path, cfg: AnalysisC
     name = name or str(meta.get("region", Path(bracket_dir).name))
 
     geom = CameraGeometry.from_config(cfg, L.shape)
+    dc = cfg.detection
     sources, labels, det_info = detection.detect_sources(
-        L, merged.hdr.clipped, geom, masks, cfg.detection.threshold_cd_m2,
-        cfg.detection.min_pixels, cfg.detection.merge_radius_px, cfg.calibration.factor)
-    exclude = detection.exclusion_mask(masks, L.shape)
+        L, merged.hdr.clipped, geom, masks, dc.threshold_cd_m2, dc.min_pixels,
+        dc.merge_radius_px, cfg.calibration.factor, dc.lighting, dc.reflection_threshold_cd_m2,
+        dc.reflection_merge_radius_px)
+    exclude = detection.exclusion_mask(masks, L.shape, dc.lighting)
 
     if lb is None:
         L_b, lb_info = background.lb_frame(L, geom.solid_angle, labels, exclude,
@@ -153,7 +155,7 @@ def evaluate_region(bracket_dir: str | Path, out_dir: str | Path, cfg: AnalysisC
     pos_metrics["threshold_sensitivity"] = metrics.threshold_sensitivity(
         L, merged.hdr.clipped, geom, masks, cfg.detection.sensitivity_cd_m2,
         cfg.detection.min_pixels, cfg.detection.merge_radius_px, cfg.calibration.factor, R,
-        cfg.ugr, L_b)
+        cfg.ugr, L_b, dc.lighting, dc.reflection_threshold_cd_m2, dc.reflection_merge_radius_px)
 
     flags = []
     if lb_info.get("provisional"):
@@ -170,9 +172,13 @@ def evaluate_region(bracket_dir: str | Path, out_dir: str | Path, cfg: AnalysisC
                          f"{100 * (pr['ratio'] - 1):+.1f} % (shutter timing?)")
     if merged.weights_source != "matrix":
         flags.append(f"luminance weights from {merged.weights_source}")
-    if masks.glazing:
-        flags.append("glazing treated as excluded: reflections in it are not counted yet "
-                     "(reflection detection, REQUIREMENTS §3.2, is not built)")
+    if masks.glazing and dc.lighting == "dark" and \
+            dc.reflection_threshold_cd_m2 == dc.threshold_cd_m2:
+        flags.append("reflection threshold not set apart from the direct one yet "
+                     "(REQUIREMENTS §9): dim reflections in the glazing may be missed")
+    if not masks.glazing and dc.lighting == "dark":
+        flags.append("no glazing drawn for this position: reflections are rated as direct "
+                     "sources, if bright enough")
     if any(s.flags for s in sources):
         flags.append("some sources carry flags - see the source table")
 

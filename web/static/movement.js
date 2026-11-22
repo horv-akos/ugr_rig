@@ -108,7 +108,7 @@ function render() {
   for (const b of [$("save-form").querySelector("button"), $("gaze"), $("run")]) {
     b.disabled = !canMove || !profile;
   }
-  document.querySelectorAll(".positions .go").forEach((b) => { b.disabled = !canMove; });
+  document.querySelectorAll(".positions .go, #cov-prop .go").forEach((b) => { b.disabled = !canMove; });
 
   if (Date.now() - speedEditing > 1500) {
     $("speed").value = Math.round(st.speed * 100);
@@ -411,6 +411,29 @@ async function loadProfile() {
     } catch (e) { say(e.message, "bad"); }
   }
   renderProfile();
+  loadCoverage();
+}
+
+async function loadCoverage() {
+  const line = $("cov-line");
+  if (!profile || !profile.forward_gaze) {
+    line.textContent = profile ? "Set the forward gaze to see how much of the driver's view the positions cover." : "";
+    $("cov-details").hidden = true;
+    return;
+  }
+  $("cov-details").hidden = false;
+  let c;
+  try { c = await api("GET", `/api/positions/${seg(profile.name)}/coverage`); } catch (e) { line.textContent = e.message; return; }
+  const ok = c.coverage >= c.coverage_min;
+  line.replaceChildren(el("span", { class: ok ? "ok" : "warn" },
+    `Glare-weighted coverage ${Math.round(100 * c.coverage)} %`),
+  ` of the forward field (target ${Math.round(100 * c.coverage_min)} %)`,
+  !ok && c.proposal.frames.length ? ` · ${c.proposal.frames.length} more frame(s) proposed` : "");
+  $("cov-img").src = `/api/positions/${seg(profile.name)}/coverage.png?t=${Date.now()}`;
+  $("cov-prop").replaceChildren(...c.proposal.frames.map(([p, t], i) => el("li", {},
+    el("span", {}, `tile ${i + 1}: pan ${deg(p)}°, tilt ${deg(t)}°`),
+    el("button", { class: "quiet go", onclick: () => act(() => api("POST", "/api/mount/goto", { pan: p, tilt: t }),
+      `going to tile ${i + 1}`) }, "Go"))));
 }
 
 function renderProfile() {

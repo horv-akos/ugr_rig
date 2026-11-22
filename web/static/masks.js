@@ -32,7 +32,7 @@ export function drawMasks(g, rect, doc, { fill = 0.18, highlight = null } = {}) 
     g.stroke();
     if (s.kind === "include") {
       const [x, y] = pts.reduce(([a, b], [px, py]) => [a + px / pts.length, b + py / pts.length], [0, 0]);
-      const text = s.name + (s.type ? ` · ${s.type}` : "");
+      const text = s.name + (s.type ? ` · ${s.type}` : "") + (s.reflects ? ` · in glass: ${s.reflects}` : "");
       g.font = "12px system-ui, sans-serif";
       const w = g.measureText(text).width;
       g.fillStyle = "rgba(0, 0, 0, 0.65)";
@@ -49,7 +49,7 @@ export function toShapes(doc) {
     ...(doc.exclude || []).map((polygon) => ({ kind: "exclude", polygon })),
     ...(doc.glazing || []).map((polygon) => ({ kind: "glazing", polygon })),
     ...(doc.include || []).map((r) => ({ kind: "include", polygon: r.polygon, name: r.name,
-      type: r.type, threshold_cd_m2: r.threshold_cd_m2 })),
+      type: r.type, threshold_cd_m2: r.threshold_cd_m2, reflects: r.reflects || null })),
   ];
 }
 
@@ -59,6 +59,7 @@ function fromShapes(shapes) {
     if (s.kind === "include") {
       const roi = { name: s.name, type: s.type || null, polygon: s.polygon };
       if (s.threshold_cd_m2) roi.threshold_cd_m2 = s.threshold_cd_m2;
+      if (s.reflects) roi.reflects = s.reflects;
       doc.include.push(roi);
     } else {
       doc[s.kind].push(s.polygon);
@@ -166,13 +167,15 @@ function draw() {
 }
 
 function renderList() {
+  const names = [...new Set(ed.shapes.filter((s) => s.kind === "include" && !s.reflects).map((s) => s.name))];
+  $("lum-names").replaceChildren(...names.map((n) => el("option", { value: n })));
   const items = ed.shapes.map((s, i) => el("li", {
     onmouseenter: () => { ed.highlight = i; draw(); },
     onmouseleave: () => { ed.highlight = null; draw(); },
   },
   el("span", { class: "swatch", style: `background: rgb(${KINDS[s.kind].color})` }),
   el("span", { class: "grow" }, s.kind === "include"
-    ? `${s.name}${s.type ? ` · ${s.type}` : ""}` : KINDS[s.kind].label,
+    ? `${s.name}${s.type ? ` · ${s.type}` : ""}${s.reflects ? ` · reflection of ${s.reflects}` : ""}` : KINDS[s.kind].label,
   el("span", { class: "muted" }, `  ${s.polygon.length} corners`)),
   el("button", { class: "quiet", title: "Delete this shape", onclick: () => {
     ed.shapes.splice(i, 1);
@@ -213,7 +216,11 @@ function finish() {
     }
     shape.name = name;
     shape.type = $("lum-type").value === "other" ? null : $("lum-type").value;
+    const refl = $("lum-reflects").value.trim();
+    if (refl === name) { ed.say("a luminaire cannot be its own reflection", "warn"); return; }
+    shape.reflects = refl || null;
     $("lum-name").value = "";
+    $("lum-reflects").value = "";
   }
   ed.shapes.push(shape);
   ed.draft = [];

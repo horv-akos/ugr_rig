@@ -120,10 +120,12 @@ def test_edit_profile_details(client):
     assert p["zero_reference"] == "fiducial on the B-pillar" and p["name"] == "cab"
 
 
-def test_glazing_is_excluded_and_flagged(tmp_path):
-    """Until reflection detection exists, glazing behaves like an exclusion (the daylight
-    rule) and every result that has glazing says so."""
-    cfg = load_analysis_config()
+def test_glazing_by_lighting(tmp_path):
+    """Daylight: glazing behaves like an exclusion. Dark: what is bright in it is a
+    reflection, rated with its own threshold and merge radius, and named R1, R2..."""
+    import dataclasses
+
+    base = load_analysis_config()
     cam = FakeCamera(load_camera_config(), scene=demo_scene(h=200, w=300), seed=1)
     cam.connect()
     cam.capture_bracket(tmp_path / "b", meta={"region": "demo", "pan_deg": 0, "tilt_deg": 0})
@@ -131,15 +133,61 @@ def test_glazing_is_excluded_and_flagged(tmp_path):
     as_exclude = detection.RegionMasks.load(_write(tmp_path / "x.json", DEMO_MASKS))
     glazing = dict(DEMO_MASKS, glazing=DEMO_MASKS["exclude"], exclude=[])
     as_glazing = detection.RegionMasks.load(_write(tmp_path / "g.json", glazing))
-    a = region.evaluate_region(tmp_path / "b", tmp_path / "oa", cfg, masks=as_exclude,
-                               k=0.0064, images=False)
-    b = region.evaluate_region(tmp_path / "b", tmp_path / "ob", cfg, masks=as_glazing,
-                               k=0.0064, images=False)
-    assert [s.name for s in a.sources] == [s.name for s in b.sources]
-    assert a.ugr == pytest.approx(b.ugr)
-    assert any("glazing treated as excluded" in f for f in b.flags)
-    assert not any("glazing" in f for f in a.flags)
-    assert b.detection_info["n_glazing"] == 1
+
+    def run(masks, out, **det):
+        cfg = dataclasses.replace(base, detection=dataclasses.replace(base.detection, **det))
+        return region.evaluate_region(tmp_path / "b", tmp_path / out, cfg, masks=masks,
+                                      k=0.0064, images=False)
+
+    a = run(as_exclude, "oa", lighting="daylight")
+    day = run(as_glazing, "od", lighting="daylight")
+    assert [s.name for s in a.sources] == [s.name for s in day.sources]
+    assert a.ugr == pytest.approx(day.ugr)
+    assert day.detection_info["glazing"] == "excluded"
+    assert all(s.path == "direct" for s in day.sources)
+
+    night = run(as_glazing, "on", lighting="dark", reflection_threshold_cd_m2=200.0)
+    refl = [s for s in night.sources if s.path == "reflection"]
+    assert refl and all(s.name.startswith("R") for s in refl)
+    assert night.detection_info["n_reflections"] == len(refl)
+    assert night.detection_info["reflection_threshold_cd_m2"] == 200.0
+    assert night.ugr > day.ugr                      # the reflections count
+    assert not any("reflection threshold not set" in f for f in night.flags)
+    same = run(as_glazing, "os", lighting="dark")   # threshold not set apart: flagged
+    assert any("reflection threshold not set" in f for f in same.flags)
+
+
+def test_reflection_roi_inherits_its_luminaire(tmp_path):
+    """An inclusion ROI with `reflects` is that luminaire's reflection: path reflection,
+    the parent's type and spectral factor, the reflection threshold."""
+    import numpy as np
+    from photometry.masks import CameraGeometry
+
+    L = np.full((60, 80), 5.0, np.float32)
+    L[10:14, 10:14] = 9000.0                        # the luminaire
+    L[40:44, 50:54] = 300.0                         # its reflection in the glass
+    geom = CameraGeometry(width=80, height=60, pitch_mm=0.3, focal_mm=18.0)
+    masks = detection.RegionMasks(
+        glazing=[[(0.5, 0.5), (1.0, 0.5), (1.0, 1.0), (0.5, 1.0)]],
+        include=[detection.InclusionROI("dome", [(0.05, 0.1), (0.25, 0.1), (0.25, 0.3), (0.05, 0.3)],
+                                        source_type="amber"),
+                 detection.InclusionROI("dome in glass", [(0.55, 0.6), (0.75, 0.6), (0.75, 0.8),
+                                                          (0.55, 0.8)], reflects="dome")])
+    factor = {"amber": 1.08}.get
+    srcs, _, info = detection.detect_sources(
+        L, np.zeros(L.shape, bool), geom, masks, 500.0, 4, 3, lambda t: factor(t, 1.0),
+        "dark", reflection_threshold=200.0)
+    by = {s.name: s for s in srcs}
+    r = by["dome in glass"]
+    assert r.path == "reflection" and r.reflects == "dome" and r.source_type == "amber"
+    assert r.spectral_factor == 1.08 and by["dome"].path == "direct"
+    assert info["n_reflections"] == 1
+    # an edge-touching source is cut and flagged
+    L[0:3, 70:80] = 9000.0
+    srcs, _, _ = detection.detect_sources(L, np.zeros(L.shape, bool), geom, masks, 500.0, 4, 3,
+                                          lambda t: 1.0, "dark", 200.0)
+    cut = [s for s in srcs if s.cut]
+    assert len(cut) == 1 and any("cut by the frame edge" in f for f in cut[0].flags)
 
 
 def _write(path, obj):

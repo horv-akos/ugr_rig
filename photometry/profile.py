@@ -59,6 +59,9 @@ class DetectionConfig:
     min_pixels: int
     merge_radius_px: int
     sensitivity_cd_m2: tuple[float, ...] = (250.0, 500.0, 1000.0, 2000.0)
+    lighting: str = "dark"                     # the study's: glazing searched (dark) or excluded
+    reflection_threshold_cd_m2: float = 500.0
+    reflection_merge_radius_px: int = 3
 
 
 @dataclass(frozen=True)
@@ -77,6 +80,15 @@ class UGRConfig:
 
 
 @dataclass(frozen=True)
+class ForwardConfig:
+    coverage_min: float = 0.9            # below: the forward-gaze UGR is a lower bound
+    match_tolerance_deg: float = 0.5     # footprints this close are one source
+    luminance_mismatch_warn: float = 0.25  # two whole views of one source further apart: flag
+    tiling_overlap: float = 0.1
+    coverage_bin_deg: float = 1.0
+
+
+@dataclass(frozen=True)
 class ReportConfig:
     luminance_scale_cd_m2: tuple[float, float] = (1.0, 100000.0)
 
@@ -91,6 +103,7 @@ class AnalysisConfig:
     background: BackgroundConfig
     ugr: UGRConfig
     report: ReportConfig = ReportConfig()
+    forward: ForwardConfig = ForwardConfig()
     source: Path | None = None
 
     def snapshot(self) -> dict[str, Any]:
@@ -160,6 +173,11 @@ def load_analysis_config(path: str | Path | None = None) -> AnalysisConfig:
             merge_radius_px=int(d.get("merge_radius_px", 3)),
             sensitivity_cd_m2=tuple(float(x) for x in
                                     d.get("sensitivity_cd_m2", (250.0, 500.0, 1000.0, 2000.0))),
+            lighting=str(d.get("lighting", "dark")),
+            reflection_threshold_cd_m2=float(d.get("reflection_threshold_cd_m2",
+                                                   d.get("threshold_cd_m2", 500.0))),
+            reflection_merge_radius_px=int(d.get("reflection_merge_radius_px",
+                                                 d.get("merge_radius_px", 3))),
         ),
         background=BackgroundConfig(
             method=method,
@@ -174,6 +192,7 @@ def load_analysis_config(path: str | Path | None = None) -> AnalysisConfig:
         ),
         report=ReportConfig(luminance_scale_cd_m2=tuple(
             float(x) for x in raw.get("report", {}).get("luminance_scale_cd_m2", (1.0, 1e5)))),
+        forward=ForwardConfig(**{k: float(v) for k, v in raw.get("forward", {}).items()}),
         source=path,
     )
     return cfg

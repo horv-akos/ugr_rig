@@ -85,9 +85,10 @@ Glazing pixels that are not sources count toward the background in both conditio
 known light outside the vehicle. The lighting condition is set per study and recorded with every
 result.
 
-Built so far (2026-11-19): glazing polygons are drawn per position in the mask editor and read by
-detection, which treats them as excluded (the `daylight` rule) until reflection detection exists.
-Every result with glazing carries a flag saying reflections in it are not counted yet.
+Built 2026-11-22 on the simulator (`analysis/detection.py`): the study's lighting condition goes
+to detection (`detection.lighting`, in every result's provenance). In `dark` studies glazing is
+searched for reflections, named R1, R2…, `path = "reflection"`, counted in UGR; in `daylight`
+studies it is excluded. `ugrctl process --lighting` does the same outside a study.
 
 ### 3.2 Detection
 
@@ -107,12 +108,19 @@ Order: exclusion polygons → inclusion ROIs → glazing (reflections) → every
 - A separate, lower **reflection threshold**. Glass reflects a few percent at normal incidence and
   considerably more at the grazing angles of a raked windscreen, so the reflection of an
   8 000 cd/m² dome light lands near the 500 cd/m² direct threshold. Absolute, configurable per
-  position profile, recorded with every result. Default: open item (§9).
+  position profile, recorded with every result. Default: open item (§9). As built:
+  `[detection] reflection_threshold_cd_m2` (MEASURE), until set equal to the direct threshold,
+  and every `dark` result with glazing is flagged while the two are equal. Per position profile:
+  not built (the config value applies to every study).
 - A separate **merge radius**. Laminated glass gives a double image, one per surface, which can sit
   further apart than `merge_radius_px`; the pair must count as one reflection.
 - An optional `reflects` link from a reflection ROI to the luminaire ROI it mirrors. The report can
   then split a luminaire's glare into direct and reflected, and the reflection inherits the
-  parent's source type for the spectral factor (glass reflection is close to neutral).
+  parent's source type for the spectral factor (glass reflection is close to neutral). Built
+  (mask editor: "Reflection of…"). The luminaire may be in another position's frame, so the
+  link is a name; the type is inherited only when the luminaire is drawn in the same position.
+  As built the merge radius is `[detection] reflection_merge_radius_px` (MEASURE, until set
+  the direct one). A source touching the frame edge is marked `cut` and flagged.
 
 ### 3.3 Background luminance
 
@@ -185,6 +193,24 @@ Forward gaze:
   flagged as a lower bound.
 - The position profile editor can propose a tiling of the forward field with a set overlap, and
   shows the coverage map while positions are recorded.
+
+Built 2026-11-22 on the simulator (`analysis/forward.py`, `pipeline/study.py process_forward`):
+- Footprints are caps of each source's own solid angle; two views match when their caps come
+  within `[forward] match_tolerance_deg` (0.5°, the head's repeatability). Two sources in one
+  frame are never merged. Kept: the uncut view nearest its frame centre. Two whole views that
+  differ in luminance by more than `luminance_mismatch_warn` (25 %) are flagged.
+- Coverage: the forward hemisphere on a 1° az/el grid around the gaze, each cell weighted by its
+  solid angle over p² (capped p). `coverage_min` 0.9 is a starting value (§9).
+- L_b: the sweep's; without a sweep the median of the positions' frame L_b, flagged provisional.
+  The check position (a repeat) is left out.
+- Outputs: `forward.json` and `coverage.png` (the map: weight, frames, uncovered space dimmed,
+  the sources) in the study folder; the Forward gaze tile and map on the home page; a Forward
+  gaze sheet in the workbook. A profile without a forward gaze gets no forward-gaze UGR and a
+  flag.
+- Tiling: greedy over a grid around the gaze (steps of the field of view less
+  `tiling_overlap`), each pick the frame that adds the most weight, inside the soft limits,
+  until `coverage_min`. Shown on the Movement page with the profile's coverage map; the
+  operator goes to a proposed frame and saves it as a position.
 
 ---
 
@@ -458,8 +484,8 @@ the raw zip, the comparison view and the shutdown button. The calibration step a
 - Downloads: a results zip (images, Excel, CSV, JSON) and a raw zip (CR2s), separately. The raw
   set is ~200 MB per position. Disk space indicator
 
-**Movement calibration** (`/movement`, built 2026-11-19 except the tiling proposal, the coverage
-map and profile copy; zero on the fiducial and the zero check since 2026-11-22)
+**Movement calibration** (`/movement`, built 2026-11-19 except profile copy; zero on the
+fiducial and the zero check since 2026-11-22; coverage map and tiling proposal 2026-11-22)
 
 Saving a position also stores a live-view frame as its reference image. The mask editor draws
 on that image: tap the corners, tap the first one (or Finish) to close, choose Exclude, Glazing,
@@ -537,8 +563,9 @@ Every study retains:
 Built 2026-11-20 (`analysis/metrics.py`) except where marked *new*: the per-source share, UGR
 change without it, median L, illuminance at the eye and contrast; the per-position percentiles,
 fraction above threshold and threshold sensitivity (thresholds in `[detection]
-sensitivity_cd_m2`). Still *new* (not built): everything about reflections, the forward gaze,
-coverage and aim error.
+sensitivity_cd_m2`). Reflections (path, `reflects`), the forward gaze and its coverage built
+2026-11-22, the aim error 2026-11-22. Still *new*: the direct/reflected split per luminaire in
+the report.
 
 Per source
 
@@ -584,7 +611,7 @@ PositionProfile  name, vehicle_id, zero_reference, forward_gaze (pan_deg, tilt_d
                  threshold_cd_m2, reflection_threshold_cd_m2, content_hash
 Position         profile, order, id, name, pan_deg, tilt_deg, saved_at; files <id>.jpg
                  (reference image) and <id>.masks.json (exclude, glazing, include ROIs:
-                 name, type, polygon, threshold; reflects planned)
+                 name, type, polygon, threshold, reflects)
 Study            id, vehicle_id, position_profile, camera_profile, lighting_condition,
                  started_at, operator, notes, k_stored, k_measured, k_drift_flag, L_b, E_ind,
                  zero_ref, zero_drift_deg, check_delta_ugr, ugr_forward, coverage,
@@ -640,12 +667,12 @@ ugr_rig/
 │   └── masks.py          per-pixel direction + solid angle, Guth/Iwata p     (built)
 ├── analysis/
 │   ├── detection.py      ROI + absolute-threshold source extraction          (built)
-│   │                     glazing read, excluded and flagged for now          (built)
-│   │                     reflections in glazing                              (planned)
+│   │                     reflections in glazing (dark), excluded (daylight)  (built)
 │   ├── background.py     frame mean (provisional) + hemisphere sweep → L_b   (built)
 │   ├── ugr.py            CIE 117 formula, perception scale                   (built)
 │   ├── spot.py           fiducial centroid, phase correlation                (built)
-│   └── forward.py        all positions: de-duplication, coverage, forward-gaze UGR (planned)
+│   └── forward.py        all positions: de-duplication, coverage, tiling,
+│                         forward-gaze UGR, coverage map                      (built)
 ├── service/              rig controller: owns the mount and camera, one motion at a time, jog
 │                         heartbeat, position profiles, live view; study.py:  (built)
 │                         the session sequence and its analysis queue;
@@ -654,11 +681,11 @@ ugr_rig/
 │                         exports beyond the results zip                      (planned)
 ├── report/               images.py: photo, luminance, contribution, sources, masks,
 │                         UGR stamp; excel.py: the study workbook             (built)
-│                         forward-gaze map, PDF                               (planned)
+│                         PDF                                                 (planned)
 ├── pipeline/             region.py: one direction end to end (built); study.py: worker-process
 │                         jobs for a study (sweep, regions) and its summary   (built)
 │                         optical.py: optical zero, drift, aim, lens tracking (built)
-│                         forward gaze                                        (planned)
+│                         study.py process_forward: the forward-gaze job      (built)
 ├── web/                  FastAPI over service/: HTTP API, MJPEG live view, movement and home
 │                         pages (static/: plain HTML/CSS/JS, no build step)   (built)
 │                         camera calibration page                             (built)
@@ -695,12 +722,13 @@ sim-tested.
    `service/` with its API, `rigctl`, preview frames in `hal/camera*.py` (built 2026-11-19)
 4. `web` movement calibration page: needed in the cab to record positions, and handy for measuring
    the head (built 2026-11-19, incl. reference images and the mask editor; zero on the
-   fiducial 2026-11-22; tiling and coverage map still to come)
+   fiducial 2026-11-22; coverage map and tiling proposal 2026-11-22)
 5. `storage` + the session sequence (`pipeline/study.py`), optical zeroing and the drift check;
    home page (built 2026-11-19 on the simulator; optical zero, drift check and aim check
    2026-11-22)
 6. Reflections in detection, the forward-gaze combination, report images and the Excel workbook
-   (images, metrics, Excel and re-analysis built 2026-11-20)
+   (images, metrics, Excel and re-analysis built 2026-11-20; reflections and the forward gaze
+   2026-11-22 on the simulator)
 7. Camera calibration page (lens geometry, `k`), validation of the photometry against the target
    and the handheld meter; PDF report (camera profiles, the page and `k` built 2026-11-20 on the
    simulator; lens geometry by spot tracking 2026-11-22; validation needs the body and the
@@ -732,15 +760,21 @@ sim-tested.
   view must show the same field as the CR2. Confirm on the body that Canon live view is not
   cropped or offset relative to the raw frame; if it is, store the offset in the camera profile
 - Reflections (§3.1, §3.2): the default reflection threshold and the double-image merge radius,
-  both set from the first `dark` session in a cab
+  both set from the first `dark` session in a cab (`[detection] reflection_threshold_cd_m2`,
+  `reflection_merge_radius_px`, MEASURE: equal to the direct values until then, and flagged)
 - Lights outside the vehicle seen through the glass at night: exclusion polygons, or a lights-off
   reference bracket per position (cab lights off, same pose) subtracted from the lights-on one,
   which isolates everything the cab's own lights produce, direct and reflected. Costs a second
   bracket per position. The same difference is the only way reflections could be measured in a
   `daylight` study
 - Forward gaze (§3.6): how it is aimed per vehicle (e.g. a road point at a given distance),
-  `coverage_min`, the extent of the forward field, and the footprint-overlap test for
-  de-duplication
+  `coverage_min` (0.9 as built, a starting value), the extent of the forward field (as built:
+  the whole forward hemisphere, weighted by 1/p²), and the footprint-overlap test for
+  de-duplication (as built: caps of each source's solid angle plus 0.5°; an elongated source
+  seen cut in one frame may not match its whole view)
+- Reference images: a snapshot could show the head before it finished moving (the frame in
+  progress was returned). Fixed 2026-11-22; positions saved before then may have reference
+  images (and masks drawn on them) slightly off: retake them
 - Whether the hemisphere sweep and the forward-gaze tiling can be one capture set with the full
   bracket: saves a pass, costs time per sweep frame
 - Proposed, not decided: **veiling luminance** (disability glare, Stiles–Holladay / CIE 146)

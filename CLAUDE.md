@@ -50,10 +50,10 @@ hal/         ONLY layer that touches hardware
 photometry/  profile (analysis.toml) · linearise (CR2 -> superpixels) · hdr (Debevec merge)
              · calibration (k) · masks (pixel direction/solid angle, Guth/Iwata position index)
              · lensfit (focal length, k1, zero tilt from the fiducial tracked by the head)
-analysis/    detection (ROIs, threshold blobs) · background (L_b) · ugr · metrics (share,
-             UGR without each source, percentiles, threshold sensitivity) · spot (fiducial
-             centroid, phase correlation)
-             planned: glazing/reflections in detection, forward.py (all positions, forward gaze)
+analysis/    detection (ROIs, threshold blobs, reflections in glazing) · background (L_b)
+             · ugr · metrics (share, UGR without each source, percentiles, threshold
+             sensitivity) · spot (fiducial centroid, phase correlation) · forward (all
+             positions against the forward gaze, de-duplication, coverage, tiling)
 report/      images.py: photo, luminance, contribution, sources, masks (dark, UGR stamp)
              · excel.py: the study workbook. PDF not started
 pipeline/    region.py: one direction, bracket dir -> result dir · study.py: worker-process
@@ -127,8 +127,9 @@ talks to hardware, so it is always testable on a desk against stored brackets.
 - Two UGRs: per position along the camera axis (stamped on that position's images), per study
   along the forward gaze (the headline). Never average UGR values; the scale is logarithmic.
 - Glazing polygons are not exclusions. In `dark` studies sources inside them are reflections and
-  count, against their own lower threshold; in `daylight` studies glazing is excluded. Until
-  reflection detection exists, `exclusion_mask()` excludes glazing and the result flags it.
+  count, against their own threshold (`detection.lighting`, set from the study); in `daylight`
+  studies glazing is excluded. The reflection threshold and merge radius are MEASURE: equal to
+  the direct ones until the first dark cab session, and flagged while they are.
 - Masks belong to a position (`<data>/profiles/positions/<slug>/<id>.masks.json`), drawn on its
   reference image `<id>.jpg`; the file is the `--masks` input of `ugrctl process`. Position ids
   are stable, so re-saving a position keeps its masks. Names may not contain `/` or `\`.
@@ -148,6 +149,9 @@ talks to hardware, so it is always testable on a desk against stored brackets.
   never in the server process. Steps not built yet are recorded `skipped` and flagged.
 - The simulated camera shoots small brackets of `CabView`; `processing_setup()` passes the
   pixel pitch that keeps the 2000D field of view, as a config override in the provenance.
+- `/static` is served `Cache-Control: no-cache`, so after an update no phone runs old page
+  code against the new API. Reference images come from `LiveView.snapshot()`, which drops the
+  frame in progress (it may predate the end of the move).
 - Pages are dark on purpose (a bright screen lights the cab and reflects in the glazing), and
   build DOM with `el()` from `web/static/api.js`, never `innerHTML` with operator-typed names.
 - `k` = cd/m² per (DN · N² / (t · ISO)). `k = 0` means uncalibrated, and `process` refuses
@@ -184,7 +188,8 @@ study folders + SQLite index), camera control (fake libgphoto2 only), the whole 
 chain for one position with metrics, report images and the Excel workbook, re-analysis,
 camera profiles and the camera page at `/camera` (k from the target, accepted into the profile;
 a study uses one accepted within 12 h as its calibration shot), optical zero, drift check and
-aim check, lens geometry measured with the head, `ugrctl`. Not yet run on the real 2000D, on real CR2s, or on
+aim check, lens geometry measured with the head, reflections in the glazing, the forward-gaze
+UGR with coverage and a tiling proposal, `ugrctl`. Not yet run on the real 2000D, on real CR2s, or on
 the Pi.
 
 Plan v0.6 is recorded in `REQUIREMENTS.md` (decided 2026-11-19): live view from the camera's own
@@ -193,5 +198,5 @@ windscreen reflections, forward-gaze study rating, report images, metrics, Excel
 
 Next, roughly in order (`REQUIREMENTS.md` §8): camera on the body (`camera info`, one bracket,
 live view); `mountctl drivers` on the bench, then the head measurements; Pi setup per
-`deploy/README.md`; at the desk meanwhile, reflections; forward gaze (with the tiling and
-coverage map); PDF. Open items list: `REQUIREMENTS.md` §9.
+`deploy/README.md`; at the desk meanwhile, batch 6: PDF, raw zip, comparison view, shutdown
+button, profile copy, rigctl study commands, test speed. Open items list: `REQUIREMENTS.md` §9.

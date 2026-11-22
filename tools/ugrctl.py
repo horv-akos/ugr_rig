@@ -139,8 +139,17 @@ def cmd_simulate(args) -> int:
     return 0
 
 
+def with_lighting(cfg, args):
+    import dataclasses
+
+    if getattr(args, "lighting", None):
+        cfg = dataclasses.replace(cfg, detection=dataclasses.replace(cfg.detection,
+                                                                     lighting=args.lighting))
+    return cfg
+
+
 def cmd_process(args) -> int:
-    cfg = load_analysis_config(args.analysis_config)
+    cfg = with_lighting(load_analysis_config(args.analysis_config), args)
     masks = detection.RegionMasks.load(args.masks)
     out = Path(args.out) if args.out else Path(args.bracket) / "result"
     res = region.evaluate_region(args.bracket, out, cfg, masks=masks, lb=load_lb(args),
@@ -157,7 +166,7 @@ def cmd_shoot(args) -> int:
         cam.capture_bracket(bracket, meta=region_meta(args))
     finally:
         cam.close()
-    cfg = load_analysis_config(args.analysis_config)
+    cfg = with_lighting(load_analysis_config(args.analysis_config), args)
     res = region.evaluate_region(bracket, bracket / "result", cfg,
                                  masks=detection.RegionMasks.load(args.masks),
                                  lb=load_lb(args), k=args.k)
@@ -356,6 +365,9 @@ def main(argv=None) -> int:
     def processing_args(sp):
         sp.add_argument("--masks", help="JSON with exclusion polygons and inclusion ROIs")
         sp.add_argument("--k", type=float, help="override the calibration constant")
+        sp.add_argument("--lighting", choices=("dark", "daylight"),
+                        help="dark: glazing is searched for reflections; daylight: glazing is "
+                             "excluded (default: analysis.toml)")
         lb = sp.add_mutually_exclusive_group()
         lb.add_argument("--lb", type=float, help="background luminance, cd/m2")
         lb.add_argument("--lb-json", help="output of `ugrctl sweep -o`")

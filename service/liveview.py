@@ -81,13 +81,18 @@ class LiveView:
             return self._seq, self._frame
 
     def snapshot(self, timeout: float = 5.0) -> bytes | None:
-        """A fresh frame even when nobody is streaming. None at once without a camera."""
+        """A frame begun after this call, even when nobody is streaming. None at once without
+        a camera. The first new frame is thrown away: the grabber may have started it before
+        the call, i.e. while the head was still moving, and a reference image taken from it
+        would sit off the position (the aim check and the masks are drawn against it)."""
         if self.camera is None:
             return None
         self.subscribe()
         try:
+            deadline = time.monotonic() + timeout
             seq, _ = self.latest()
-            return self.wait_frame(seq, timeout)[1]
+            seq, frame = self.wait_frame(seq, max(0.0, deadline - time.monotonic()))
+            return self.wait_frame(seq, max(0.0, deadline - time.monotonic()))[1] or frame
         finally:
             self.unsubscribe()
 

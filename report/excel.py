@@ -98,7 +98,11 @@ def write(study_dir: str | Path, study: dict[str, Any], path: str | Path | None 
         ("  limit (°)", (study.get("drift") or {}).get("limit_deg")),
         ("L_b (cd/m²)", sweep.get("L_b")), ("  from", "hemisphere sweep" if sweep else "each frame (provisional)"),
         ("  sweep coverage (cosine-weighted)", sweep.get("coverage_cos_weighted")),
-        ("Forward-gaze UGR", "not built yet (REQUIREMENTS §3.6)"),
+        ("Forward-gaze UGR", (study.get("forward") or {}).get("ugr")
+         if study.get("forward") else "no forward gaze set in the position profile"),
+        ("  a lower bound (coverage under target)", (study.get("forward") or {}).get("lower_bound")),
+        ("  glare-weighted coverage", (study.get("forward") or {}).get("coverage")),
+        ("  share from reflections", (study.get("forward") or {}).get("reflection_share")),
         ("k (cd/m² per DN·N²/(t·ISO))", proc.get("k")),
         ("Software", (study.get("software") or {}).get("commit")),
     ]
@@ -146,19 +150,47 @@ def write(study_dir: str | Path, study: dict[str, Any], path: str | Path | None 
 
     # -- Sources ----------------------------------------------------------------- #
     cols = [("Position", 20, None), ("Id", 5, None), ("Name", 14, None), ("Kind", 7, None),
-            ("Type", 10, None), ("L mean cd/m²", 12, n1), ("L median", 11, n1),
+            ("Path", 10, None), ("Reflects", 12, None), ("Type", 10, None), ("L mean cd/m²", 12, n1), ("L median", 11, n1),
             ("L peak", 11, n1), ("ω sr", 11, sci), ("σ °", 7, n1), ("τ °", 7, n1),
             ("p", 7, n2), ("L²ω/p²", 11, sci), ("Share", 8, pct), ("UGR change without it", 11, n2),
             ("E at eye lx", 10, n3), ("L / L_b", 9, n1), ("Clipped", 8, pct), ("Flags", 50, wrap)]
     data = []
     for p, res in rows:
         for s in (res or {}).get("sources", []):
-            data.append([p["name"], s["id"], s["name"], s["kind"], s.get("source_type"),
+            data.append([p["name"], s["id"], s["name"], s["kind"], s.get("path", "direct"),
+                         s.get("reflects"), s.get("source_type"),
                          s["L_cd_m2"], s.get("L_median_cd_m2"), s["L_peak_cd_m2"], s["omega_sr"],
                          s.get("sigma_deg"), s.get("tau_deg"), s.get("p"), s.get("contribution"),
                          s.get("share"), s.get("delta_ugr"), s.get("e_eye_lx"), s.get("contrast"),
                          s.get("clipped_fraction"), "; ".join(s.get("flags", []))])
     table(wb.add_worksheet("Sources"), cols, data)
+
+    # -- Forward gaze ---------------------------------------------------------------- #
+    fw = study.get("forward")
+    if fw:
+        ws = wb.add_worksheet("Forward gaze")
+        top = [("Forward-gaze UGR", fw.get("ugr")), ("Category", fw.get("category")),
+                ("Gaze (pan, tilt °)", json.dumps(fw.get("gaze"))),
+                ("L_b (cd/m²)", fw.get("L_b")), ("  from", fw.get("lb_method")),
+                ("Glare-weighted coverage", fw.get("coverage")),
+                ("  target", fw.get("coverage_min")), ("  a lower bound", fw.get("lower_bound")),
+                ("Sources (counted once)", fw.get("n_sources")),
+                ("  observations before de-duplication", fw.get("n_observations")),
+                ("Share from reflections", fw.get("reflection_share"))]
+        for r, (k, v) in enumerate(top):
+            ws.write(r, 0, k)
+            if v is not None:
+                ws.write(r, 1, v)
+        table(ws, [("Source", 26, None), ("Path", 10, None), ("Reflects", 12, None),
+                   ("Pan °", 8, n2), ("Tilt °", 8, n2), ("L cd/m²", 11, n1), ("ω sr", 11, sci),
+                   ("σ °", 7, n1), ("τ °", 7, n1), ("p", 7, n2), ("L²ω/p²", 11, sci),
+                   ("Share", 8, pct), ("Seen from", 9, None), ("Other views (L ratio)", 30, wrap),
+                   ("Flags", 50, wrap)],
+              [[x["name"], x["path"], x.get("reflects"), x["pan_deg"], x["tilt_deg"],
+                x["L_cd_m2"], x["omega_sr"], x["sigma_deg"], x["tau_deg"], x["p"],
+                x["contribution"], x["share"], x["seen_from"],
+                "; ".join(f"{o['position']}: {o['L_ratio']:.2f}" for o in x["others"]),
+                "; ".join(x["flags"])] for x in fw.get("sources", [])], row0=len(top) + 1)
 
     # -- Movement profile ------------------------------------------------------------ #
     ws = wb.add_worksheet("Movement profile")

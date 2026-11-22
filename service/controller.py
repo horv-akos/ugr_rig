@@ -841,6 +841,33 @@ class RigController:
         with self._profiles_lock:
             return self.profiles.load(name)
 
+    def coverage(self, profile: str, png: bool = False) -> dict[str, Any] | bytes:
+        """Glare-weighted coverage of the forward field by a profile's positions, and a
+        tiling that would bring it to [forward] coverage_min (analysis.forward). With `png`,
+        the map instead."""
+        from analysis import forward
+        from photometry.profile import load_analysis_config
+
+        p = self.get_profile(profile)
+        if p.forward_gaze is None:
+            raise RigError("set the forward gaze first: coverage is measured around it")
+        cfg = load_analysis_config()
+        fov = tuple(float(x) for x in self.geometry["fov_deg"])
+        cap = cfg.ugr.position_index_cap
+        frames = [(q.name, q.pan_deg, q.tilt_deg) for q in p.positions]
+        prop = forward.propose_tiling(p.forward_gaze, fov, self.status()["limits"], cap,
+                                      cfg.forward.coverage_min, cfg.forward.tiling_overlap,
+                                      existing=[(a, b) for _, a, b in frames])
+        if png:
+            return forward.coverage_png(p.forward_gaze, fov, frames, cap,
+                                        proposed=[tuple(f) for f in prop["frames"]],
+                                        title=p.name)
+        grid = forward.hemisphere(p.forward_gaze, cap, cfg.forward.coverage_bin_deg)
+        cov = forward.coverage(grid, forward.covered(grid, [(a, b) for _, a, b in frames], fov))
+        return {"profile": p.name, "gaze": list(p.forward_gaze), "coverage": cov,
+                "coverage_min": cfg.forward.coverage_min, "fov_deg": list(fov),
+                "proposal": prop}
+
     def describe(self, p: PositionProfile) -> dict[str, Any]:
         """The profile as the API returns it: the TOML content plus, per position, whether
         it has a reference image and how many masks."""

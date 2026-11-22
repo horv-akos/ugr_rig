@@ -214,14 +214,16 @@ def render_all(out: Path, L: np.ndarray, labels: np.ndarray, sources: list, mask
     for s in sorted(sources, key=lambda s: -s.contribution):
         x0, y0, x1, y1 = (v / n for v in s.bbox_px)
         pad = 3
+        reflection = getattr(s, "path", "direct") == "reflection"
+        col = CYAN if reflection else AMBER          # reflections in the glass: the glazing's colour
         f.ax.add_patch(Rectangle((x0 - pad, y0 - pad), x1 - x0 + 2 * pad, y1 - y0 + 2 * pad,
-                                 fill=False, ec=AMBER, lw=2 if s.share >= 0.2 else 1.3,
+                                 fill=False, ec=col, lw=2 if s.share >= 0.2 else 1.3,
                                  ls="--" if s.flags else "-"))
-        txt = (f"{s.id} {s.name}  {s.L_cd_m2:,.0f} cd/m²  "
+        txt = (f"{s.id} {s.name}{' (refl.)' if reflection else ''}  {s.L_cd_m2:,.0f} cd/m²  "
                f"{100 * s.share:.0f} %" + ("  *" if s.flags else ""))
         right = x0 > 0.55 * w        # near the right edge: hang the label leftwards
         f.ax.text(x1 + pad if right else x0 - pad, y1 + pad + 2, txt, va="top",
-                  ha="right" if right else "left", color=AMBER, fontsize=f.fs * 0.85,
+                  ha="right" if right else "left", color=col, fontsize=f.fs * 0.85,
                   bbox=dict(fc="black", ec="none", alpha=0.65, pad=1.5))
     if not sources:
         f.ax.text(0.5, 0.06, "no source at or above the threshold", transform=f.ax.transAxes,

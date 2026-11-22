@@ -113,6 +113,16 @@
       <input name="name" placeholder="Name for the current view" maxlength="80" required autocomplete="off">
       <button type="submit" class="primary">Save position</button>
     </form>
+    <div id="coverage" class="coverage">
+      <div id="cov-line" class="hint"></div>
+      <details id="cov-details">
+        <summary>Coverage map and proposed tiling</summary>
+        <img id="cov-img" class="geometry" alt="Coverage of the forward field by these positions">
+        <p class="hint">Dashed: frames that would bring the coverage to the target. Go to one,
+          adjust if needed, and save it as a position.</p>
+        <ol id="cov-prop" class="mask-list"></ol>
+      </details>
+    </div>
     <div class="row">
       <button id="gaze" title="The driver's view of the road: the line of sight of the study's headline UGR">Set forward gaze here</button>
       <button id="run">Visit all in order</button>
@@ -151,6 +161,9 @@
           <option value="display">display</option>
           <option value="other">other</option>
         </select>
+        <input id="lum-reflects" list="lum-names" maxlength="60" autocomplete="off"
+          placeholder="Reflection of… (empty: direct)" title="For a luminaire seen in the glass: the luminaire it mirrors. It then uses the reflection threshold and that luminaire's source type">
+        <datalist id="lum-names"></datalist>
       </div>
       <p class="hint">Tap the corners on the image. Tap the first corner, or Finish, to close the
         shape. <kbd>Enter</kbd> finishes, <kbd>Backspace</kbd> undoes a corner.</p>

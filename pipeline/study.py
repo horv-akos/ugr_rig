@@ -63,6 +63,7 @@ def process_region(job: dict[str, Any]) -> dict[str, Any]:
         "n_sources": len(res.sources),
         "flags": res.flags,
         "sources": [{"name": s.name, "kind": s.kind, "type": s.source_type,
+                     "path": s.path, "reflects": s.reflects, "cut": s.cut,
                      "L_cd_m2": s.L_cd_m2, "L_peak_cd_m2": s.L_peak_cd_m2,
                      "omega_sr": s.omega_sr, "p": s.p, "contribution": s.contribution,
                      "share": s.share, "delta_ugr": s.delta_ugr, "e_eye_lx": s.e_eye_lx,
@@ -73,6 +74,42 @@ def process_region(job: dict[str, Any]) -> dict[str, Any]:
         "metrics": res.metrics,
         "masks_version": masks.version or None,
     }
+
+
+def process_forward(job: dict[str, Any]) -> dict[str, Any]:
+    """The study's forward-gaze UGR (analysis.forward) from its positions' result.json files:
+    every source in mount coordinates, counted once, against the profile's forward gaze, with
+    the session L_b; plus the glare-weighted coverage and its map (coverage.png)."""
+    from analysis import forward, ugr as ugr_mod
+
+    cfg = config(job.get("overrides"))
+    fw, u = cfg.forward, cfg.ugr
+    obs, frames, fov = [], [], None
+    for e in job["positions"]:
+        r = json.loads(Path(e["result"]).read_text())
+        obs += forward.observations(e["name"], float(r["pan_deg"]), float(r["tilt_deg"]),
+                                    r["sources"])
+        frames.append((e["name"], float(r["pan_deg"]), float(r["tilt_deg"])))
+        g = r["geometry"]
+        fov = fov or (float(g["fov_h_deg"]), float(g["fov_v_deg"]))
+    gaze = (float(job["gaze"][0]), float(job["gaze"][1]))
+    sources = forward.deduplicate(obs, fw.match_tolerance_deg, fw.luminance_mismatch_warn)
+    value = forward.rate(sources, gaze, float(job["L_b"]), u.omega_min_sr, u.omega_max_sr,
+                         u.position_index_cap)
+    grid = forward.hemisphere(gaze, u.position_index_cap, fw.coverage_bin_deg)
+    cov = forward.coverage(grid, forward.covered(grid, [(p, t) for _, p, t in frames], fov))
+    out = forward.summary(sources, value, float(job["L_b"]), cov, fw.coverage_min)
+    out.update({"category": ugr_mod.category(value), "gaze": list(gaze),
+                "lb_method": job.get("lb_method"), "fov_deg": list(fov),
+                "frames": [{"name": n, "pan_deg": p, "tilt_deg": t} for n, p, t in frames],
+                "n_observations": len(obs), "config": dataclasses.asdict(fw)})
+    d = Path(job["dir"])
+    (d / "forward.json").write_text(json.dumps(out, indent=2))
+    (d / "coverage.png").write_bytes(forward.coverage_png(
+        gaze, fov, frames, u.position_index_cap, out["sources"],
+        title="forward-gaze UGR " + ("-" if value is None else f"{value:.1f}")))
+    out["outputs"] = {"forward": "forward.json", "coverage_map": "coverage.png"}
+    return out
 
 
 def process_calibration(job: dict[str, Any]) -> dict[str, Any]:
@@ -110,4 +147,9 @@ def summarise(study: dict[str, Any]) -> dict[str, Any]:
     if (check.get("result") or {}).get("ugr") is not None and first \
             and (first.get("result") or {}).get("ugr") is not None:
         out["check_delta_ugr"] = check["result"]["ugr"] - first["result"]["ugr"]
+    fw = study.get("forward") or {}
+    out["forward_ugr"] = fw.get("ugr")
+    out["forward_coverage"] = fw.get("coverage")
+    out["forward_lower_bound"] = fw.get("lower_bound")
+    out["forward_reflection_share"] = fw.get("reflection_share")
     return out

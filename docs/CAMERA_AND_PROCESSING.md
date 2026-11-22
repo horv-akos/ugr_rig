@@ -182,9 +182,14 @@ image), and the same file is the `--masks` input of `ugrctl process`:
 ```
 
 `type` selects a spectral factor from `[calibration.spectral_factors]`. `glazing` marks the
-windscreen and side glass: in a dark study reflections of the cab's lights in it are to be
-detected as sources (REQUIREMENTS §3.1). That is not built yet, so for now glazing is excluded
-like `exclude`, still counts toward L_b, and every result with glazing carries a flag saying so.
+windscreen and side glass. In a `dark` study (the default, or `--lighting dark`) what is bright
+in it is a reflection of the cab's lights: detected against `reflection_threshold_cd_m2` with
+`reflection_merge_radius_px` (laminated glass's double image), named R1, R2…, `path
+"reflection"`, counted in UGR and drawn in cyan on the source map. In a `daylight` study glazing
+is excluded like `exclude`. Either way glazing that is not a source counts toward L_b. A
+luminaire ROI with `"reflects": "dome"` is the dome's reflection: the reflection threshold, and
+the dome's type when the dome is drawn in the same position. A source touching the frame edge
+is `cut` and flagged (its omega is truncated).
 
 ### 2.6 Background (`analysis/background.py`)
 
@@ -248,7 +253,7 @@ ugrctl --camera sim selftest            synthetic cab end to end, ~5 s, no hardw
 ugrctl simulate DIR                     fake 2000D bracket + matching demo masks
 ugrctl camera info                      what the body reports and offers
 ugrctl capture DIR --region R --pan P --tilt T
-ugrctl process DIR [--masks M] [--k K] [--lb L | --lb-json J]
+ugrctl process DIR [--masks M] [--k K] [--lighting dark|daylight] [--lb L | --lb-json J]
 ugrctl shoot SESSION --region R ...     capture + process
 ugrctl calibrate DIR --roi x0,y0,x1,y1 (--luminance L | --lux E --rho ρ)
 ugrctl sweep DIR... [-o J]

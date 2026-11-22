@@ -199,3 +199,40 @@ def test_study_without_the_fiducial_flags_the_zero(tmp_path):
         assert any("optical zero failed" in f for f in st["flags"])
     finally:
         rig.close()
+
+
+def test_snapshot_is_begun_after_the_call():
+    """A reference image must show where the head is now: the frame the grabber was already
+    exposing when the snapshot was asked for is thrown away."""
+    import threading
+
+    from service.liveview import LiveView
+
+    class SlowCam:
+        """Each frame records the pose at the start of its exposure."""
+        def __init__(self):
+            self.pose = b"A"
+            self.started = threading.Event()
+
+        def connect(self): pass
+        def close(self): pass
+        def end_preview(self): pass
+
+        def preview(self):
+            pose = self.pose
+            self.started.set()
+            time.sleep(0.08)
+            return pose
+
+    cam = SlowCam()
+    live = LiveView(cam, "sim", max_fps=100)
+    try:
+        live.subscribe()
+        assert live.wait_frame(0, 2.0)[1] == b"A"
+        cam.started.clear()
+        assert cam.started.wait(1.0)        # a frame of pose A is being exposed now
+        cam.pose = b"B"                     # the head arrives
+        assert live.snapshot(timeout=2.0) == b"B"
+    finally:
+        live.unsubscribe()
+        live.close()

@@ -175,6 +175,16 @@ def create_app(rig: RigController) -> FastAPI:
 
     app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
+    @app.middleware("http")
+    async def revalidate_static(request: Request, call_next):
+        # Without a Cache-Control header browsers reuse scripts by heuristic, so after an
+        # update a phone could run old page code against the new API. no-cache still uses
+        # the cached copy, but only after the ETag check says it is current.
+        response = await call_next(request)
+        if request.url.path.startswith("/static/"):
+            response.headers["Cache-Control"] = "no-cache"
+        return response
+
     @app.get("/", include_in_schema=False)
     def root() -> RedirectResponse:
         return RedirectResponse("/home")
@@ -458,6 +468,16 @@ def create_app(rig: RigController) -> FastAPI:
     @app.post("/api/positions/{profile}/order")
     def reorder(profile: str, body: Order) -> dict[str, Any]:
         return rig.describe(rig.reorder_positions(profile, body.names))
+
+    @app.get("/api/positions/{profile}/coverage")
+    def coverage(profile: str) -> dict[str, Any]:
+        """Glare-weighted coverage of the forward field, and a proposed tiling."""
+        return rig.coverage(profile)
+
+    @app.get("/api/positions/{profile}/coverage.png")
+    def coverage_png(profile: str) -> Response:
+        return Response(rig.coverage(profile, png=True), media_type="image/png",
+                        headers={"Cache-Control": "no-cache"})
 
     @app.post("/api/positions/{profile}/gaze")
     def gaze(profile: str) -> dict[str, Any]:

@@ -359,3 +359,11 @@ img.geometry { width: 100%; border-radius: 8px; background: var(--bg); }
 .typed-k { display: grid; gap: 8px; justify-items: start; }
 .typed-k .row { width: 100%; }
 label.stack.wide { flex: 2 1 220px; }
+
+/* ---- forward gaze (home) and coverage (movement) ------------------------ */
+figure.forward { margin: 12px 0; }
+figure.forward img { width: 100%; border-radius: 8px; background: var(--bg); }
+figure.forward figcaption { display: grid; gap: 2px; margin-top: 6px; }
+.coverage { margin: 10px 0; }
+.coverage details summary { cursor: pointer; color: var(--muted); font-size: 13px; margin: 6px 0; }
+.ok { color: var(--ok, #6fd38a); }

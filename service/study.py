@@ -104,6 +104,7 @@ def new_record(study_id: str, profile: PositionProfile, lighting: str, operator:
         "check": None,
         "zero": None,
         "drift": None,
+        "forward": None,
         "processing": {},
         "summary": {},
         "flags": [],
@@ -416,6 +417,7 @@ class StudyRun:
         name = (st.get("camera_profile") or {}).get("name")
         k, overrides, notes = self.rig.processing_setup(
             name if name in self.rig.camera_profiles.names() else None)
+        overrides = {**overrides, "detection.lighting": st.get("lighting", "dark")}
         with self._lock:
             st["processing"] = {"k": k, "overrides": overrides, "notes": notes}
         if not k:
@@ -437,6 +439,8 @@ class StudyRun:
             if k:
                 n = sum(p.get("result") is not None for p in st["positions"])
                 failed = sum(p["state"] == "failed" for p in st["positions"])
+                if n:
+                    self._run_forward(overrides, lb)
                 self._write_report()
                 self.step("analysis", "failed" if failed and not n else "done",
                           f"{n} position(s) rated" + (f", {failed} failed" if failed else ""))
@@ -480,7 +484,8 @@ class StudyRun:
         stamp = now_iso().replace(":", "").replace("-", "")
         old = self.dir / "previous" / stamp
         moved = []
-        for name in ("results", "background.json", "report.xlsx"):
+        for name in ("results", "background.json", "report.xlsx", "forward.json",
+                     "coverage.png"):
             src = self.dir / name
             if src.exists():
                 old.mkdir(parents=True, exist_ok=True)
@@ -495,10 +500,11 @@ class StudyRun:
             st["status"] = "analysing"
             st["finished_at"] = None
             st["sweep"]["result"] = None
+            st["forward"] = None
             st.pop("outputs", None)
             st["flags"] = [f for f in st["flags"] if not f.startswith((
                 "not analysed: no k", "hemisphere sweep could", "sweep covered",
-                "Excel workbook"))]
+                "Excel workbook", "no forward gaze", "forward gaze", "forward-gaze"))]
             for e in st["positions"] + ([st["check"]] if st.get("check") else []):
                 e["result"], e["error"] = None, None
                 e["state"] = "captured" if e.get("bracket") else "pending"
@@ -554,6 +560,49 @@ class StudyRun:
         res["outputs"] = {key: f"{rel}/{name}" for key, name in res["outputs"].items()}
         res["seconds"] = round(time.monotonic() - t0, 2)
         entry["result"], entry["state"] = res, "done"
+        self.save()
+
+
+    def _run_forward(self, overrides: dict[str, Any], lb: dict[str, Any] | None) -> None:
+        """The study's headline, from every rated position (not the check, a repeat)."""
+        st = self.study
+        gaze = st["profile"].get("forward_gaze")
+        if not gaze:
+            st["forward"] = None
+            self.flag("no forward gaze in the position profile: no forward-gaze UGR (set it on "
+                      "the Movement page, then re-analyse)")
+            return
+        rated = [p for p in st["positions"] if p.get("result")]
+        if lb is not None:
+            L_b, method = float(lb["L_b"]), "sweep"
+        else:
+            import statistics
+
+            L_b, method = statistics.median(p["result"]["L_b"] for p in rated), "frame median"
+        self.step("analysis", "running", "forward gaze")
+        job = {"dir": str(self.dir), "gaze": gaze, "L_b": L_b, "lb_method": method,
+               "overrides": overrides,
+               "positions": [{"name": p["name"],
+                              "result": str(self.dir / p["result"]["dir"] / "result.json")}
+                             for p in rated]}
+        try:
+            res = self.rig.pool().submit(worker.process_forward, job).result()
+        except Exception as exc:   # noqa: BLE001 - the positions stand without it
+            log.warning("forward gaze failed: %s", exc)
+            self.flag(f"forward-gaze UGR could not be computed ({exc})")
+            return
+        if method != "sweep":
+            self.flag("forward-gaze UGR on a provisional L_b (median of the frames): no sweep")
+        if res["lower_bound"]:
+            self.flag(f"forward gaze: the positions cover {100 * res['coverage']:.0f} % of the "
+                      f"glare-weighted forward field, under {100 * res['coverage_min']:.0f} %: "
+                      "the forward-gaze UGR is a lower bound")
+        for s in res["sources"]:
+            for f in s["flags"]:
+                if f.startswith(("cut by the frame edge in every view", "seen from")):
+                    self.flag(f"forward gaze, {s['name']}: {f}")
+        with self._lock:
+            st["forward"] = res
         self.save()
 
 

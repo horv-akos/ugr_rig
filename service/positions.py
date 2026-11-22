@@ -263,6 +263,12 @@ def clean_masks(raw: dict[str, Any]) -> dict[str, Any]:
             raise ProfileError(f"include[{i}]: type is a short text, e.g. white_led")
         item: dict[str, Any] = {"name": name, "type": typ or None,
                                 "polygon": _polygon(roi.get("polygon"), f"include[{i}]")}
+        refl = roi.get("reflects")
+        if refl is not None and refl != "":
+            if not isinstance(refl, str) or len(refl.strip()) > MASK_LIMITS["name"]                     or refl.strip() == name:
+                raise ProfileError(f"include[{i}]: reflects names another luminaire (it may "
+                                   "be in another position's frame)")
+            item["reflects"] = refl.strip()
         thr = roi.get("threshold_cd_m2")
         if thr is not None:
             if isinstance(thr, bool) or not isinstance(thr, (int, float)) or not thr > 0:

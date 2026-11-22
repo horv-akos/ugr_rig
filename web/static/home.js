@@ -186,8 +186,12 @@ function renderStudy() {
 
   const sm = s.summary || {};
   const lb = s.sweep && s.sweep.result;
+  const fw = s.forward;
   const tiles = [
-    ["Max UGR", fmtUgr(sm.ugr_max), ugrClass(sm.ugr_max), sm.ugr_max_position || ""],
+    ["Forward gaze", fw ? `${fw.lower_bound && fw.ugr !== null ? "≥ " : ""}${fmtUgr(fw.ugr)}` : "—",
+      fw ? ugrClass(fw.ugr) : "", fw ? `${Math.round(100 * fw.coverage)} % covered · ${fw.n_sources} source(s)`
+        : s.profile.forward_gaze ? "after analysis" : "no gaze set"],
+    ["Max UGR", fmtUgr(sm.ugr_max), ugrClass(sm.ugr_max), `camera axis · ${sm.ugr_max_position || ""}`],
     ["Over 19", sm.n_rated ? `${sm.n_over_19} / ${sm.n_rated}` : "—", sm.n_over_19 ? "warn" : "", "positions"],
     ["Over 22", sm.n_rated ? `${sm.n_over_22} / ${sm.n_rated}` : "—", sm.n_over_22 ? "bad" : "", "positions"],
     ["Check ΔUGR", sm.check_delta_ugr === null || sm.check_delta_ugr === undefined ? "—"
@@ -200,6 +204,20 @@ function renderStudy() {
   $("summary").replaceChildren(...tiles.map(([k, v, cls, sub]) => el("div", { class: "tile" },
     el("span", { class: "k" }, k), el("span", { class: `v ${cls}` }, v), el("span", { class: "sub muted" }, sub))));
   $("study-flags").replaceChildren(...s.flags.map((f) => el("li", {}, f)));
+  const cov = fw && fw.outputs && fw.outputs.coverage_map;
+  $("forward").hidden = !cov;
+  if (cov) {
+    const url = `/api/studies/${seg(s.id)}/files/${cov}`;
+    if ($("covmap").getAttribute("src") !== url) $("covmap").src = url;
+    $("covmap-link").href = url;
+    const top = fw.sources.slice(0, 4);
+    $("fw-top").replaceChildren(
+      el("div", {}, `Forward gaze ${fmtUgr(fw.ugr)} (${fw.category})${fw.lower_bound ? ", a lower bound: coverage under target" : ""}`
+        + ` · L_b ${fw.L_b.toFixed(2)} cd/m² (${fw.lb_method})`
+        + (fw.n_reflections ? ` · reflections ${Math.round(100 * fw.reflection_share)} % of the glare` : "")),
+      ...top.map((x) => el("div", { class: "muted" }, `${x.name}${x.path === "reflection" ? " (reflection)" : ""}: `
+        + `${Math.round(100 * x.share)} % · p ${x.p.toFixed(2)} · seen from ${x.seen_from} position(s)`)));
+  }
 
   $("stop").hidden = s.status !== "recording";
   $("zip").href = `/api/studies/${seg(s.id)}/results.zip`;
