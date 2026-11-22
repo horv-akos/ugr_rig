@@ -68,7 +68,11 @@
     <button id="stop" class="stop">STOP<small>space</small></button>
 
     <div class="row">
-      <button id="zero">Set zero here</button>
+      <button id="zero-optical" class="primary" title="Aim the crosshair near the fiducial first. The head centroids it and makes it (0, 0)">Zero on fiducial</button>
+      <button id="zero-check" title="Go to (0, 0) and measure the fiducial, correcting nothing: the drift since the zero">Check zero</button>
+    </div>
+    <div class="row">
+      <button id="zero" title="Declare this pose (0, 0) by eye: about 0.3 deg, and no drift check">Set zero by eye</button>
       <button id="backlash" title="Back off and return along the approach direction, so this view is what a saved position replays">Take up backlash</button>
     </div>
 

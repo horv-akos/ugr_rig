@@ -114,6 +114,9 @@ class RigController:
         self.camera_profiles = CameraProfileStore(self.data_dir / "profiles" / "camera")
         self.camera_profiles.ensure_default()
         self.calibrations_dir = self.data_dir / "calibrations"
+        self.lensfits_dir = self.data_dir / "lensfits"
+        self._zero_info: dict[str, Any] | None = None   # how the current zero was set
+        self._last_check: dict[str, Any] | None = None  # the last fiducial check
         self.studies = StudyStore(self.data_dir / "studies")
         self.index = StudyIndex(self.data_dir / "index.sqlite")
         self._runs: dict[str, StudyRun] = {}
@@ -458,6 +461,8 @@ class RigController:
                               "approach_sign": a.approach_sign}
                      for a in (self.mount.cfg.pan, self.mount.cfg.tilt)},
             "unzeroed_jog_deg": self.mount.cfg.unzeroed_jog_deg,
+            "zero": self.zero_info(),
+            "zero_check": self._last_check if self.mount.is_zeroed else None,
             "live_view": self.live.status(),
             "studies_active": {sid: r.study["status"] for sid, r in list(self._runs.items())
                                if r.analysing.is_set()},
@@ -558,9 +563,235 @@ class RigController:
                     raise RigError("zero cancelled before the backlash was taken up")
                 self._require_lash("set the zero")
                 self.mount.set_zero()
+                self._zero_info = {"method": "manual", "at": now_iso()}
+                self._last_check = None
                 return {"backlash_taken_up": moved, "pan_deg": 0.0, "tilt_deg": 0.0}
 
             return self._start("zero", {}, run)
+
+    # -- optical zero, zero check, lens geometry ----------------------------- #
+
+    def _frame_geometry(self, shape: tuple[int, int], focal_mm: float | None = None,
+                        k1: float | None = None):
+        from photometry.profile import load_analysis_config
+        from pipeline import optical
+
+        s = load_analysis_config().sensor
+        p = self.camera_profile()
+        return optical.frame_geometry(shape, s.pixel_pitch_um * 1e-3 * s.width_px,
+                                      p.focal_mm if focal_mm is None else focal_mm,
+                                      p.distortion_k1 if k1 is None else k1)
+
+    def live_frames(self, cam, n: int) -> list[bytes]:
+        """`n` live-view frames from a camera the caller holds (inside `live.paused()`), after
+        one thrown away: the first frame after a move can be one the body buffered before
+        it. Live view is ended again, so nothing stays warm."""
+        try:
+            cam.preview()
+            return [cam.preview() for _ in range(n)]
+        finally:
+            cam.end_preview()
+
+    def measure_fiducial(self, cam, expect: tuple[float, float] = (0.0, 0.0)):
+        """The fiducial seen from where the head is now (pipeline.optical.measure_fiducial).
+        Raises analysis.spot.SpotNotFound when it is not near `expect`."""
+        from analysis.spot import gray
+        from pipeline import optical
+
+        cfg = optical.load_optical_config()
+        frames = self.live_frames(cam, cfg.frames)
+        geom = self._frame_geometry(gray(frames[0]).shape)
+        return optical.measure_fiducial(frames, geom, self.mount.position(), cfg, expect)
+
+    def zero_info(self) -> dict[str, Any] | None:
+        return self._zero_info if self.mount.is_zeroed else None
+
+    def note_zero(self, method: str, m=None) -> None:
+        self._zero_info = {"method": method, "at": now_iso()}
+        if m is not None:
+            self._zero_info["correction_deg"] = [round(m.pan_deg, 4), round(m.tilt_deg, 4)]
+        self._last_check = None
+
+    def note_check(self, m) -> None:
+        from pipeline.optical import load_optical_config
+
+        self._last_check = {"at": now_iso(), "offset_deg": round(m.offset_deg, 4),
+                            "limit_deg": load_optical_config().drift_limit_deg}
+
+    def optical_zero(self) -> Motion:
+        """Zero on the fiducial. Aim roughly at it first (within [optical] search_deg of the
+        crosshair). The backlash is taken up, the fiducial is centroided, and the datum is
+        set so that the fiducial is (0, 0); then the head goes to (0, 0) and measures again,
+        which is the residual. Works with or without a zero: without one, the current pose
+        is the first guess."""
+        from pipeline import optical
+
+        with self._lock:
+            self._require_idle()
+            self._require_enabled()
+            if self.live.camera is None:
+                raise RigError("no camera: optical zeroing needs live view")
+
+            def run(stop: threading.Event) -> dict[str, Any]:
+                self.mount.take_up_backlash(self._speed, stop)
+                if stop.is_set():
+                    raise RigError("zero cancelled before the backlash was taken up")
+                self._require_lash("set the zero")
+                if not self.mount.is_zeroed:
+                    self.mount.set_zero()
+                pan, tilt = self.mount.position()
+                with self.live.paused() as cam:
+                    m = self.measure_fiducial(cam, expect=(pan, tilt))
+                    before = self._zero_info
+                    self.mount.set_zero(pan - m.pan_deg, tilt - m.tilt_deg)
+                    r = self.mount.move_to(0.0, 0.0, speed=self._speed, stop=stop)
+                    if r.stopped:
+                        raise RigError("stopped before the check at (0, 0)")
+                    check = self.measure_fiducial(cam)
+                info = {"method": "optical", "at": now_iso(),
+                        "correction_deg": [round(m.pan_deg - pan, 4), round(m.tilt_deg - tilt, 4)],
+                        "residual_deg": round(check.offset_deg, 4),
+                        "spread_px": round(max(m.spread_px, check.spread_px), 3),
+                        "previous": before}
+                self._zero_info = {k: v for k, v in info.items() if k != "previous"}
+                self._last_check = {"at": info["at"], "offset_deg": info["residual_deg"],
+                                    "limit_deg": optical.load_optical_config().drift_limit_deg}
+                return {**info, "fiducial": m.as_dict(), "check": check.as_dict()}
+
+            return self._start("optical_zero", {}, run)
+
+    def check_zero(self) -> Motion:
+        """Go to (0, 0) and measure the fiducial without correcting anything: how far the
+        head has drifted since the zero (the drift check, any time)."""
+        from pipeline.optical import load_optical_config
+
+        with self._lock:
+            self._require_idle()
+            self._require_enabled()
+            if self.live.camera is None:
+                raise RigError("no camera: the zero check needs live view")
+            if not self.mount.is_zeroed:
+                raise RigError("no zero to check")
+
+            def run(stop: threading.Event) -> dict[str, Any]:
+                r = self.mount.move_to(0.0, 0.0, speed=self._speed, stop=stop)
+                if r.stopped:
+                    raise RigError("stopped before (0, 0)")
+                with self.live.paused() as cam:
+                    m = self.measure_fiducial(cam)
+                limit = load_optical_config().drift_limit_deg
+                out = {"at": now_iso(), "offset_deg": round(m.offset_deg, 4),
+                       "pan_deg": round(m.pan_deg, 4), "tilt_deg": round(m.tilt_deg, 4),
+                       "limit_deg": limit, "over_limit": m.offset_deg > limit,
+                       "zero": self._zero_info, "fiducial": m.as_dict()}
+                self._last_check = {"at": out["at"], "offset_deg": out["offset_deg"],
+                                    "limit_deg": limit}
+                return out
+
+            return self._start("check_zero", {}, run)
+
+    def measure_lens(self, profile: str, distance_m: float) -> Motion:
+        """Track the fiducial over a grid of poses around the zero and fit the lens's focal
+        length and k1 (photometry.lensfit). The fit is offered, not applied: accept it into
+        the camera profile (`accept_lens`). The fiducial must be at (0, 0): zero on it first."""
+        from photometry import lensfit
+        from photometry.profile import load_analysis_config
+        from pipeline import optical
+
+        prof = self.camera_profiles.load(profile)
+        if not distance_m > 0:
+            raise ValueError("the distance to the fiducial must be positive (metres)")
+        with self._lock:
+            self._require_idle()
+            self._require_enabled()
+            if self.live.camera is None:
+                raise RigError("no camera: the lens measurement needs live view")
+            if not self.mount.is_zeroed:
+                raise RigError("zero on the fiducial first: the lens is measured around it")
+            fid = f"{now_iso().replace(':', '').replace('-', '')}-{slug(prof.name)}"
+            ocfg = optical.load_optical_config()
+            sensor = load_analysis_config().sensor
+            sensor_w = sensor.pixel_pitch_um * 1e-3 * sensor.width_px
+            nominal = self._frame_geometry((2, 3), prof.focal_mm, prof.distortion_k1)
+            fov = tuple(float(x) for x in nominal.fov_deg())
+            poses = lensfit.grid(fov)
+            limits = self.status()["limits"]
+            poses = [(p, t) for p, t in poses if limits["pan"][0] <= p <= limits["pan"][1]
+                     and limits["tilt"][0] <= t <= limits["tilt"][1]]
+
+            def run(stop: threading.Event) -> dict[str, Any]:
+                from analysis.spot import SpotNotFound, gray
+
+                sightings, missed, shape = [], [], None
+                with self.live.paused() as cam:
+                    for i, (p, t) in enumerate(poses):
+                        if stop.is_set():
+                            raise RigError("lens measurement stopped")
+                        self._motion.detail["progress"] = f"{i + 1} of {len(poses)}"
+                        r = self.mount.move_to(p, t, speed=self._speed, stop=stop)
+                        if r.stopped:
+                            raise RigError("lens measurement stopped")
+                        frames = self.live_frames(cam, ocfg.frames)
+                        shape = gray(frames[0]).shape
+                        geom = optical.frame_geometry(shape, sensor_w, prof.focal_mm,
+                                                      prof.distortion_k1)
+                        try:
+                            m = optical.measure_fiducial(frames, geom, (p, t), ocfg)
+                        except SpotNotFound as exc:
+                            missed.append({"pan_deg": p, "tilt_deg": t, "why": str(exc)})
+                            continue
+                        sightings.append(lensfit.Sighting(p, t, m.u, m.v))
+                    self.mount.move_to(0.0, 0.0, speed=self._speed, stop=stop)
+                if len(sightings) < 12:
+                    raise RigError(f"the fiducial was found at {len(sightings)} of "
+                                   f"{len(poses)} poses: need 12 (is it at (0, 0)?)")
+                f = lensfit.fit(sightings, shape[1], shape[0], sensor_w, prof.focal_mm,
+                                distance_m, ocfg.pupil_offset_mm)
+                notes = []
+                if ocfg.pupil_offset_mm == 0:
+                    notes.append("pupil offset not measured (mount.toml [optical]): parallax "
+                                 f"not corrected, focal length biased by up to ~e/D at "
+                                 f"{distance_m:g} m")
+                notes.append("rests on the gear ratios (PIVOT_DETAIL §8) and on live view "
+                             "showing the whole sensor width (REQUIREMENTS §9)")
+                record = {"id": fid, "at": now_iso(), "profile": prof.name,
+                          "nominal": {"focal_mm": prof.focal_mm, "k1": prof.distortion_k1},
+                          "distance_m": distance_m, "fit": f.as_dict(), "missed": missed,
+                          "notes": notes, "accepted_at": None}
+                d = self.lensfits_dir / fid
+                d.mkdir(parents=True, exist_ok=True)
+                (d / "lensfit.json").write_text(json.dumps(record, indent=2), encoding="utf-8")
+                return record
+
+            return self._start("lens", {"profile": prof.name, "lensfit": fid,
+                                         "progress": f"0 of {len(poses)}"}, run)
+
+    def lens_fits(self, profile: str | None = None, limit: int = 20) -> list[dict[str, Any]]:
+        out = []
+        if self.lensfits_dir.is_dir():
+            for f in sorted(self.lensfits_dir.glob("*/lensfit.json"), reverse=True):
+                rec = json.loads(f.read_text(encoding="utf-8"))
+                if profile is None or rec["profile"] == profile:
+                    out.append(rec)
+                if len(out) >= limit:
+                    break
+        return out
+
+    def accept_lens(self, profile: str, lensfit_id: str) -> CameraProfile:
+        """Make a measured focal length and k1 the profile's."""
+        f = self.lensfits_dir / lensfit_id / "lensfit.json"
+        if "/" in lensfit_id or "\\" in lensfit_id or not f.is_file():
+            raise ProfileNotFound(f"no lens measurement {lensfit_id!r}")
+        rec = json.loads(f.read_text(encoding="utf-8"))
+        if rec["profile"] != profile:
+            raise RigError(f"lens measurement {lensfit_id} was made with profile {rec['profile']}")
+        with self._profiles_lock:
+            p = self.camera_profiles.load(profile).with_lens(
+                rec["fit"]["focal_mm"], rec["fit"]["k1"], rec["at"], lensfit_id)
+            self.camera_profiles.save(p)
+        rec["accepted_at"] = now_iso()
+        f.write_text(json.dumps(rec, indent=2), encoding="utf-8")
+        return p
 
     def take_up_backlash(self) -> Motion:
         with self._lock:

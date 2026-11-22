@@ -34,14 +34,18 @@ async function poll() {
     renderLive();
     if (!bodyShown && st.state === "idle" && st.live_view.source !== "none") showBody();
     const m = st.last_motion;
-    if (m && m.kind === "calibrate" && m.id !== lastMotion) {
-      if (lastMotion !== null) showResult(m);
-      lastMotion = m.id;
-    } else if (m && lastMotion === null) {
+    if (m && m.id !== lastMotion) {
+      if (lastMotion !== null && m.kind === "calibrate") showResult(m);
+      if (lastMotion !== null && m.kind === "lens") showLens(m);
       lastMotion = m.id;
     }
     $("shoot").disabled = st.state !== "idle" || !roi || !prof || st.live_view.source === "none";
     $("shoot").textContent = st.state === "calibrate" ? "Shooting and measuring…" : "Shoot calibration bracket";
+    const lensOk = st.state === "idle" && st.zeroed && st.enabled && st.live_view.source !== "none";
+    $("lens-go").disabled = !lensOk || !prof;
+    $("lens-go").title = lensOk ? "" : "needs the drivers on, a zero on the fiducial and live view";
+    $("lens-go").textContent = st.state === "lens"
+      ? `Measuring… ${(st.motion && st.motion.detail.progress) || ""}` : "Measure with the head";
   } catch {
     $("conn").classList.remove("up");
     $("conn").textContent = "no server";
@@ -236,6 +240,9 @@ async function loadProfile() {
     : [el("tr", { class: "empty" }, el("td", { colspan: 4 },
       prof.k ? "k from the config template, never measured or typed here." : "No k yet."))]));
   $("geometry").src = `/api/camera/profiles/${seg(prof.name)}/geometry.png?f=${prof.focal_mm}&k=${prof.distortion_k1}`;
+  $("lens-state").textContent = `${prof.focal_mm.toPrecision(5)} mm, k1 ${prof.distortion_k1.toPrecision(3)} · `
+    + (prof.lens_measured_at ? `measured with the head ${utc(prof.lens_measured_at)} UTC` : "nominal, not measured");
+  loadLensFits();
   loadCalibrations();
 }
 
@@ -258,6 +265,66 @@ async function setTypedK(e) {
   const p = await act(() => api("POST", `/api/camera/profiles/${seg(prof.name)}/k`, { k, note }),
     `k set by hand to ${k.toPrecision(5)}`);
   if (p) { e.target.reset(); await loadProfiles(p.name); }
+}
+
+// ---------------------------------------------------------------- lens geometry
+
+function lensLine(f) {
+  return `f ${f.focal_mm.toFixed(3)} ± ${f.focal_sd_mm.toFixed(3)} mm · k1 ${f.k1.toFixed(4)} ± ${f.k1_sd.toFixed(4)}`;
+}
+
+function showLens(m) {
+  const box = $("lens-result");
+  box.hidden = false;
+  if (m.error) {
+    box.className = "cal-result bad";
+    box.replaceChildren(el("strong", {}, "Lens measurement failed: "), m.error.detail);
+    say(`lens measurement failed: ${m.error.detail}`, "bad");
+    return;
+  }
+  const r = m.result, f = r.fit;
+  const df = (f.focal_mm - r.nominal.focal_mm) / r.nominal.focal_mm;
+  const bad = f.rms_px > 1;
+  box.className = `cal-result ${bad ? "warn" : "ok"}`;
+  box.replaceChildren(
+    el("div", { class: "kbig" }, `${f.focal_mm.toFixed(3)} mm`),
+    el("div", {}, `${lensLine(f)} · ${pct(df)} from ${r.nominal.focal_mm} mm`),
+    el("div", { class: "muted small" }, `${f.n} poses, ${r.missed.length} missed · residual ${f.rms_px.toFixed(2)} px rms `
+      + `(${f.rms_deg.toFixed(3)}°), worst ${f.max_px.toFixed(2)} px · zero tilt ${f.zero_tilt_deg.toFixed(2)}° `
+      + `above the pan plane · fiducial at ${r.distance_m} m`),
+    bad ? el("p", { class: "warn" }, "Residuals over 1 px: a pose missed the fiducial, the head slipped, or the lens is not what the model expects.") : "",
+    ...r.notes.map((n) => el("p", { class: "hint" }, n)),
+    el("div", { class: "row" }, el("button", { class: "primary", onclick: () => acceptLens(r.id) }, "Accept into the profile"),
+      el("button", { class: "quiet", onclick: () => { box.hidden = true; } }, "Discard")));
+  say(`lens: ${lensLine(f)}, ${f.rms_px.toFixed(2)} px rms`);
+  loadLensFits();
+}
+
+async function acceptLens(id) {
+  const p = await act(() => api("POST", `/api/camera/profiles/${seg(prof.name)}/lens`, { lensfit: id }),
+    "focal length and k1 accepted into the profile");
+  if (p) { $("lens-result").hidden = true; await loadProfiles(p.name); }
+}
+
+async function loadLensFits() {
+  if (!prof) return;
+  const rows = await api("GET", `/api/camera/lens/fits?profile=${encodeURIComponent(prof.name)}`).catch(() => []);
+  $("lens-rows").replaceChildren(...(rows.length ? rows.map((r) => el("tr", {},
+    el("td", { class: "muted" }, utc(r.at)),
+    el("td", { class: "num" }, r.fit.focal_mm.toFixed(3)),
+    el("td", { class: "num" }, r.fit.k1.toFixed(4)),
+    el("td", { class: "num" }, r.fit.rms_px.toFixed(2)),
+    el("td", {}, r.accepted_at ? "accepted" : el("button", { class: "quiet", onclick: () => acceptLens(r.id) }, "Accept"))))
+    : [el("tr", { class: "empty" }, el("td", { colspan: 5 }, "Not measured with the head yet."))]));
+}
+
+async function measureLens(e) {
+  e.preventDefault();
+  const d = Number(e.target.elements.distance.value);
+  if (!(d > 0)) { say("enter the distance from the head to the fiducial", "warn"); return; }
+  $("lens-result").hidden = true;
+  await act(() => api("POST", "/api/camera/lens/measure", { profile: prof.name, distance_m: d }),
+    "measuring the lens: the head will turn over a grid around the zero…");
 }
 
 function parseFactors(text) {
@@ -305,6 +372,7 @@ function wire() {
   $("profile").addEventListener("change", loadProfile);
   $("prof-form").addEventListener("submit", saveProfile);
   $("typed-k").addEventListener("submit", setTypedK);
+  $("lens-form").addEventListener("submit", measureLens);
   $("activate").addEventListener("click", async () => {
     if (await act(() => api("POST", `/api/camera/profiles/${seg(prof.name)}/activate`), `${prof.name} is used for studies now`)) loadProfiles(prof.name);
   });

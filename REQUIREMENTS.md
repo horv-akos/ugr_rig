@@ -286,10 +286,19 @@ measured, and the spectral factors. Changing the lens means a new profile and a 
   calibration and keeps a history of the last values; deleting moves the file to `.trash/`. A
   study freezes `camera_profile.toml` into its folder; analysis and re-analysis read the lens
   constants and `k` from it. The body check runs at the study's checks step and at calibration.
-- **Lens geometry measured with the head** (not built; with optical zeroing, it needs the same
-  spot centroiding): pan and tilt by known angles while tracking one small
-  bright spot across the frame. Pixel position against angle gives the effective focal length and
-  `k1` without a chart. Needs the gear ratios verified first (`docs/PIVOT_DETAIL.md` §8).
+- **Lens geometry measured with the head** (built 2026-11-22 on the simulator,
+  `photometry/lensfit.py`): with the zero on the fiducial, the head turns over a 5 × 5 grid
+  (±0.38 of the field of view each way) while live view tracks the fiducial; a least-squares
+  fit of where it lands gives the focal length, `k1`, the fiducial's direction and the zero's
+  tilt above the plane the pan axis turns in (a zero that does not look square to the pan axis
+  curves the pan tracks, which a level-zero model would read as distortion). Parallax: the
+  head turns about its axes, not the entrance pupil, so a near fiducial reads the focal length
+  long by about pupil offset ÷ distance; the model corrects it with `pupil_offset_mm`
+  (mount.toml [optical], MEASURE) and the distance the operator enters. Offered, then accepted
+  into the camera profile (`lens_measured_at`, `lens_fit`); typing a focal length or `k1` makes
+  the lens nominal again, and a study on a nominal lens is flagged. Rests on the gear ratios
+  (`docs/PIVOT_DETAIL.md` §8) and on live view showing the whole sensor width (§9). On the
+  simulator: 18.005 ± 0.005 mm for the 18 mm lens, 0.14 px rms.
 - **Vignetting**: a flat field at the working aperture, or the same spot-tracking run with a small
   uniform patch, measuring its relative luminance across the frame.
 
@@ -304,7 +313,11 @@ The Pi generates step/dir directly through pigpio; all motion logic is Python. S
 
 - Command pan and tilt in degrees, absolute; verify the gear-ratio constants empirically before
   trusting any commanded angle
-- Optical zero at session start; repeat at session end and log the drift
+- Optical zero at session start; repeat at session end and log the drift (built 2026-11-22 on
+  the simulator, `pipeline/optical.py`, `analysis/spot.py`: the fiducial is the brightest
+  compact blob within `search_deg` of where the zero expects it, centroided in live-view
+  frames; the datum moves so it is (0, 0). Also on the Movement page: "Zero on fiducial" and
+  "Check zero". Thresholds in mount.toml [optical])
 - Refuse to move before a zero has been set — power-up position is unknown
 - Always approach a target from a consistent direction to absorb gear backlash
 - Both axes move together, in one waveform
@@ -351,7 +364,11 @@ clients of its HTTP API; `mountctl` stays as the bench and measurement tool.
   position list is only reusable between sessions if its zero is.
 - **Aim check on replay**: the frame captured at each position is compared with the stored
   reference image (FFT phase correlation in numpy). The offset in degrees is logged per position
-  and flagged above a limit.
+  and flagged above a limit. Built 2026-11-22: a live-view frame at each position (and the check
+  position) against the reference image frozen into the study; `aim_limit_deg` 0.2 is a
+  starting value until the repeatability run (PIVOT_DETAIL §8.4); a correlation peak below
+  `aim_min_peak` is flagged inconclusive. At steep tilts a pan error is partly a roll about the
+  optical axis, which a shift does not see: 0.4° of pan reads ~0.24° at tilt 45°.
 
 ### 5.2 Capture
 
@@ -423,8 +440,9 @@ summary, library search, results zip, disk space; since 2026-11-20 the five imag
 per card (a switcher picks which), each card's top source and threshold sensitivity, the Excel
 workbook, and re-analysis from the recorded brackets with the previous results kept under
 `previous/`; camera profile selection (2026-11-20, with a preflight line for an uncalibrated
-profile). Not built: the raw zip, the comparison view and the shutdown button. The zero step is
-recorded as skipped and flagged until optical zeroing exists; the calibration step as in §4.2.)
+profile). Since 2026-11-22 the zero step zeros on the fiducial (failed and flagged when it is
+not found), each card shows its aim check and the summary the end-of-session drift. Not built:
+the raw zip, the comparison view and the shutdown button. The calibration step as in §4.2.)
 
 - Select the position profile and the camera profile; set the lighting condition (§3.1), operator
   and notes
@@ -441,7 +459,7 @@ recorded as skipped and flagged until optical zeroing exists; the calibration st
   set is ~200 MB per position. Disk space indicator
 
 **Movement calibration** (`/movement`, built 2026-11-19 except the tiling proposal, the coverage
-map and profile copy; the aim check on replay is not built either)
+map and profile copy; zero on the fiducial and the zero check since 2026-11-22)
 
 Saving a position also stores a live-view frame as its reference image. The mask editor draws
 on that image: tap the corners, tap the first one (or Finish) to close, choose Exclude, Glazing,
@@ -454,7 +472,9 @@ while the arrows are pressed.
 - Live view at all times (paused while capturing), with the overlays of §5.2
 - Joystick: hold-to-move buttons per direction, nudge buttons with a step size, speed selector,
   stop and emergency stop (§5.1)
-- Set zero ("save home"), aiming at the fiducial with the crosshair
+- Zero on the fiducial: aim the crosshair near it, and the head centroids it and makes it (0, 0).
+  "Check zero" measures it again without correcting (the drift so far). "Set zero by eye"
+  remains as the fallback (about ±0.3°, and no drift figure)
 - Record positions into a position profile: save (re-approaches, §5.1), name, reorder, delete, go
   to, retake the reference image. Propose a tiling for forward-gaze coverage; coverage map
 - Position profiles: create, copy, edit; zero reference description; set the forward gaze by
@@ -468,8 +488,9 @@ measurement, the vignetting map and checking the exposure settings against the b
 - Camera profiles (§4.5): create, copy when the lens changes, edit, choose the one used for
   studies, delete; body and lens check, and "fill body and lens from the camera"
 - Exposure settings: aperture, ISO, bracket and shutter model, against the choices the body offers
-- Lens geometry: focal length and `k1` from the spot-tracking run; vignetting map. As built, both
-  are typed in and the page shows their solid-angle and position-index maps
+- Lens geometry: focal length and `k1` from the spot-tracking run (built 2026-11-22: "Measure
+  with the head", offered and accepted like a calibration); vignetting map (not built). The
+  page shows the solid-angle and position-index maps of the profile's lens
 - Luminance calibration: aim at the target in live view, draw the ROI, enter the meter reading
   (luminance, or illuminance and ρ), shoot. Shows the measured `k` against the stored one and the
   drift; accept into the profile. Without a meter, estimate `k` from the ISO rating (§4.2)
@@ -623,6 +644,7 @@ ugr_rig/
 │   │                     reflections in glazing                              (planned)
 │   ├── background.py     frame mean (provisional) + hemisphere sweep → L_b   (built)
 │   ├── ugr.py            CIE 117 formula, perception scale                   (built)
+│   ├── spot.py           fiducial centroid, phase correlation                (built)
 │   └── forward.py        all positions: de-duplication, coverage, forward-gaze UGR (planned)
 ├── service/              rig controller: owns the mount and camera, one motion at a time, jog
 │                         heartbeat, position profiles, live view; study.py:  (built)
@@ -635,7 +657,8 @@ ugr_rig/
 │                         forward-gaze map, PDF                               (planned)
 ├── pipeline/             region.py: one direction end to end (built); study.py: worker-process
 │                         jobs for a study (sweep, regions) and its summary   (built)
-│                         forward gaze, optical zeroing                       (planned)
+│                         optical.py: optical zero, drift, aim, lens tracking (built)
+│                         forward gaze                                        (planned)
 ├── web/                  FastAPI over service/: HTTP API, MJPEG live view, movement and home
 │                         pages (static/: plain HTML/CSS/JS, no build step)   (built)
 │                         camera calibration page                             (built)
@@ -650,8 +673,9 @@ a desk, not in a truck.
 through its API and never import `hal`; a CLI process that owned the mount itself would lose the
 head's position when it exits.
 
-Optical zeroing sits in `pipeline/` because it needs the mount and the camera together; `hal`
-stays testable without either.
+Optical zeroing is split the same way as processing: `pipeline/optical.py` turns live-view
+frames into angles and runs on a desk against stored frames; `service/` moves the head and
+grabs the frames. `hal` stays testable without either.
 
 ---
 
@@ -670,21 +694,28 @@ sim-tested.
 3. At the desk, alongside 1–2, against the simulators: continuous jog in `hal/mount.py`,
    `service/` with its API, `rigctl`, preview frames in `hal/camera*.py` (built 2026-11-19)
 4. `web` movement calibration page: needed in the cab to record positions, and handy for measuring
-   the head (built 2026-11-19, incl. reference images and the mask editor; tiling, coverage
-   map and the aim check still to come)
+   the head (built 2026-11-19, incl. reference images and the mask editor; zero on the
+   fiducial 2026-11-22; tiling and coverage map still to come)
 5. `storage` + the session sequence (`pipeline/study.py`), optical zeroing and the drift check;
-   home page (built 2026-11-19 on the simulator, except optical zeroing and the drift check,
-   which need the fiducial centroiding, and the calibration shot, which needs the camera page)
+   home page (built 2026-11-19 on the simulator; optical zero, drift check and aim check
+   2026-11-22)
 6. Reflections in detection, the forward-gaze combination, report images and the Excel workbook
    (images, metrics, Excel and re-analysis built 2026-11-20)
 7. Camera calibration page (lens geometry, `k`), validation of the photometry against the target
    and the handheld meter; PDF report (camera profiles, the page and `k` built 2026-11-20 on the
-   simulator; lens geometry by spot tracking goes with optical zeroing; validation needs the
-   body and the meter)
+   simulator; lens geometry by spot tracking 2026-11-22; validation needs the body and the
+   meter)
 
 ---
 
 ## 9. Open items
+
+- `pupil_offset_mm` (mount.toml [optical]): the lens's entrance pupil in front of the tilt axis,
+  for the parallax correction of the lens fit. Until measured, measure the lens against a far
+  fiducial (bias ≈ offset ÷ distance)
+- The fiducial's look: the code needs only a small spot brighter than its surroundings, within
+  `search_deg` of the crosshair at the zero. Its contrast against a lit cab at night, and
+  whether its brightest part saturates live view, to be checked with the real target
 
 - `iso_saturation_ratio` for the 2000D: a published measured saturation ISO at ISO 100 for
   this body (sensor test sites), so the ISO estimate of `k` starts closer than the label. Not

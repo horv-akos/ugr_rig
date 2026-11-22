@@ -91,6 +91,11 @@ def write(study_dir: str | Path, study: dict[str, Any], path: str | Path | None 
         ("Positions rated", sm.get("n_rated")), ("  above UGR 19", sm.get("n_over_19")),
         ("  above UGR 22", sm.get("n_over_22")),
         ("Check position: UGR change", sm.get("check_delta_ugr")),
+        ("Zero", "optical (on the fiducial)" if study.get("zero") else "set by hand (no optical zero)"),
+        ("  correction (pan, tilt °)", json.dumps((study.get("zero") or {}).get("correction_deg"))
+         if study.get("zero") else None),
+        ("Drift at the end (°)", (study.get("drift") or {}).get("offset_deg")),
+        ("  limit (°)", (study.get("drift") or {}).get("limit_deg")),
         ("L_b (cd/m²)", sweep.get("L_b")), ("  from", "hemisphere sweep" if sweep else "each frame (provisional)"),
         ("  sweep coverage (cosine-weighted)", sweep.get("coverage_cos_weighted")),
         ("Forward-gaze UGR", "not built yet (REQUIREMENTS §3.6)"),
@@ -168,8 +173,10 @@ def write(study_dir: str | Path, study: dict[str, Any], path: str | Path | None 
         if v is not None:
             ws.write(r, 1, json.dumps(v) if isinstance(v, list) else v)
     end = table(ws, [("Position", 22, None), ("Id", 12, None), ("Pan °", 9, n3),
-                     ("Tilt °", 9, n3), ("Masks", 28, None)],
-                [[p["name"], p["id"], p["pan_deg"], p["tilt_deg"], p.get("masks")]
+                     ("Tilt °", 9, n3), ("Masks", 28, None), ("Aim off reference °", 12, n3),
+                     ("Aim correlation", 12, n3)],
+                [[p["name"], p["id"], p["pan_deg"], p["tilt_deg"], p.get("masks"),
+                  (p.get("aim") or {}).get("total_deg"), (p.get("aim") or {}).get("peak")]
                  for p in study.get("positions", [])], row0=6)
     frames = (study.get("sweep") or {}).get("frames") or []
     if frames:

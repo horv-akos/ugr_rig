@@ -49,13 +49,16 @@ hal/         ONLY layer that touches hardware
                                              before ENABLE, check() before every move
 photometry/  profile (analysis.toml) · linearise (CR2 -> superpixels) · hdr (Debevec merge)
              · calibration (k) · masks (pixel direction/solid angle, Guth/Iwata position index)
+             · lensfit (focal length, k1, zero tilt from the fiducial tracked by the head)
 analysis/    detection (ROIs, threshold blobs) · background (L_b) · ugr · metrics (share,
-             UGR without each source, percentiles, threshold sensitivity)
+             UGR without each source, percentiles, threshold sensitivity) · spot (fiducial
+             centroid, phase correlation)
              planned: glazing/reflections in detection, forward.py (all positions, forward gaze)
 report/      images.py: photo, luminance, contribution, sources, masks (dark, UGR stamp)
              · excel.py: the study workbook. PDF not started
 pipeline/    region.py: one direction, bracket dir -> result dir · study.py: worker-process
-             jobs for a study (sweep -> L_b, regions) and its summary
+             jobs for a study (sweep -> L_b, regions) and its summary · optical.py: live-view
+             frames -> optical zero, drift, aim offset; [optical] in mount.toml
 service/     controller.py: owns the mount and camera, one motion thread at a time, jog
              dead-man watchdog · liveview.py: one grabber thread for all viewers, paused()
              · study.py: the session sequence (one motion) + its analysis thread
@@ -151,6 +154,12 @@ talks to hardware, so it is always testable on a desk against stored brackets.
   without `--k`. In a camera profile `k` is measured on the target, estimated from the ISO
   rating (ISO 12232, ±30 %, no meter), or typed with a note; the newest wins, the history keeps each value's source, and a study on a
   typed `k` is flagged.
+- The fiducial defines (0, 0). Zero on it (`optical_zero()`), save positions after that, and
+  each study re-zeros on it and measures the drift at the end. A zero by eye works but gives
+  no drift figure, and positions saved against it replay off by the later optical correction.
+- Check page scripts with `node --check` on an `.mjs` copy: on a `.js` file it reports success
+  even for broken code here. Patch files with CRLF endings at the byte level, or a `"\n"` in
+  a string can turn into a real line break.
 - Hardware CLIs follow `mountctl` style: argparse subcommands, `--backend/--camera sim`, a
   `selftest` that checks against known answers.
 
@@ -164,7 +173,7 @@ asking: the Pi installs from wheels on a microSD card. Approved: XlsxWriter for 
 (2026-11-19); FastAPI + uvicorn for the server (httpx for its tests). The web frontend is fully
 offline: no CDN, no Node build step (so FastAPI's /docs pages are switched off).
 
-## Status (2026-11-20)
+## Status (2026-11-22)
 
 Built and sim-tested: mount (incl. jog, nudge, speed, controlled stop, backlash tracking), the
 rig server (`service/` + `web/api.py`) and `rigctl`, live view (simulated cab on the desk), the
@@ -174,7 +183,8 @@ masks read by detection (excluded and flagged for now), studies end to end (home
 study folders + SQLite index), camera control (fake libgphoto2 only), the whole processing
 chain for one position with metrics, report images and the Excel workbook, re-analysis,
 camera profiles and the camera page at `/camera` (k from the target, accepted into the profile;
-a study uses one accepted within 12 h as its calibration shot), `ugrctl`. Not yet run on the real 2000D, on real CR2s, or on
+a study uses one accepted within 12 h as its calibration shot), optical zero, drift check and
+aim check, lens geometry measured with the head, `ugrctl`. Not yet run on the real 2000D, on real CR2s, or on
 the Pi.
 
 Plan v0.6 is recorded in `REQUIREMENTS.md` (decided 2026-11-19): live view from the camera's own
@@ -183,6 +193,5 @@ windscreen reflections, forward-gaze study rating, report images, metrics, Excel
 
 Next, roughly in order (`REQUIREMENTS.md` §8): camera on the body (`camera info`, one bracket,
 live view); `mountctl drivers` on the bench, then the head measurements; Pi setup per
-`deploy/README.md`; at the desk meanwhile, optical zeroing + drift check + aim check, with lens
-geometry by spot tracking (same centroiding); reflections; forward gaze (with the tiling and
+`deploy/README.md`; at the desk meanwhile, reflections; forward gaze (with the tiling and
 coverage map); PDF. Open items list: `REQUIREMENTS.md` §9.

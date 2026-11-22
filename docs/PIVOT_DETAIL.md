@@ -180,20 +180,38 @@ reference, and a repeatable eye-point placement.
 1. Level the base.
 2. Place the fiducial at the reference direction — brightest small thing in frame, untouched for
    the rest of the session.
-3. `pipeline/` captures a frame, centroids the target, converts the pixel offset from frame
-   centre into an angle using the lens FOV calibration, and calls `mount.adjust_zero()`.
+3. Aim the crosshair near it and press **Zero on fiducial** (Movement page). The service takes
+   the backlash up, grabs live-view frames (one thrown away, then `frames` of them), and
+   `pipeline/optical.py` finds the brightest compact blob within `search_deg` of the crosshair
+   (`analysis/spot.py`), centroids it, turns the pixel into a direction through the camera
+   profile's lens, and sets the datum so the fiducial is (0, 0). The head then goes to (0, 0)
+   and measures again: that residual is shown.
 
-At ~50° across ~6000 px that is ~0.008°/px, so centroiding to a few pixels puts the zero inside
-**0.05°**. The centroid code is the same blob detection `analysis/detection.py` needs anyway.
+Live view is ~1000 px across 64°, ~0.06°/px; the centroid takes the blob's soft edges too and
+holds to a few hundredths of a pixel on the simulator, so the zero is inside **0.05°**, and the
+residual left is one step of the head (~0.01°). It rests on live view showing the same field as
+the raw frame (REQUIREMENTS §9). The conversion assumes the zero looks square to the pan axis;
+for a zero tilted by `t` the pan correction is off by a factor 1/cos `t`, 0.005° for a 0.3°
+correction at 10°.
 
-Fallback with no target placed: aim by eye in live view and `set_zero()` manually. Costs perhaps
-±0.3° and forfeits the drift check.
+Each study repeats the zero at its start (the step fails and is flagged when the fiducial is
+not found). Fallback with no target placed: **Set zero by eye**. Costs perhaps ±0.3° and
+forfeits the drift check.
 
 ### 5.3 Drift check
 
 End of session, return to (0, 0) and re-measure the same untouched fiducial. Residual below
 0.1° means the session is good; above it, the axes lost steps — log the number, flag every angle
-in that session as suspect, and put it in the report.
+in that session as suspect, and put it in the report. Built 2026-11-22: the study's "Drift
+check" step, the Drift tile on the home page and the workbook; **Check zero** on the Movement
+page does the same at any time. `drift_limit_deg` in mount.toml [optical]. On the simulator a
+0.3° slip of the pan axis reads 0.31°.
+
+### 5.4 Aim check
+
+At each position the study compares a live-view frame with the position's reference image by
+phase correlation; the shift in degrees is how far replay landed from where the position was
+saved. Above `aim_limit_deg` (0.2, a starting value until §8.4) the position is flagged.
 
 ---
 

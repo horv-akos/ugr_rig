@@ -72,16 +72,22 @@ function render() {
 
   const pills = [
     on ? pill("drivers on", "ok") : pill("drivers off", "warn"),
-    zeroed ? pill("zeroed", "ok")
-      : pill("no zero", "bad", `jog or nudge to the fiducial, then set zero (moves are capped at ${st.unzeroed_jog_deg}° until then)`),
+    !zeroed ? pill("no zero", "bad", `aim near the fiducial, then Zero on fiducial (moves are capped at ${st.unzeroed_jog_deg}° until then)`)
+      : st.zero && st.zero.method === "optical" ? pill("zero: optical", "ok", `on the fiducial at ${(st.zero.at || "").replace("T", " ").replace("Z", "")} UTC`)
+        : pill("zero: by eye", "warn", "about 0.3°, and studies get no drift figure. Zero on the fiducial to fix both"),
   ];
+  const zc = st.zero_check;
+  if (zeroed && zc) {
+    const over = zc.offset_deg > zc.limit_deg;
+    pills.push(pill(`drift ${zc.offset_deg.toFixed(3)}°`, over ? "bad" : "ok",
+      `fiducial checked at ${zc.at.replace("T", " ").replace("Z", "")} UTC${over ? `: over ${zc.limit_deg}°, the head lost steps: zero again` : ""}`));
+  }
   if (zeroed && !st.certain) pills.push(pill("position uncertain: re-zero", "bad"));
   const drv = st.drivers;
   if (on && drv && drv.configured) {
     const ax = Object.values(drv.axes || {});
     pills.push(pill("UART verified", "ok", ax.map((a) =>
-      `address ${a.address}: 1/${a.microsteps}, run ${a.run_current_a} A, hold ${a.hold_current_a} A`).join("
-")));
+      `address ${a.address}: 1/${a.microsteps}, run ${a.run_current_a} A, hold ${a.hold_current_a} A`).join("\n")));
   }
   for (const w of (drv && drv.warnings) || []) pills.push(pill(w, "warn"));
   const lash = Object.entries(st.backlash_ok || {}).filter(([, ok]) => !ok).map(([a]) => a);
@@ -94,6 +100,8 @@ function render() {
   $("disable").disabled = !on || !idle;
   for (const b of document.querySelectorAll(".pad [data-dir]")) b.disabled = !on;
   $("zero").disabled = !on || !idle;
+  $("zero-optical").disabled = !on || !idle || st.live_view.source === "none";
+  $("zero-check").disabled = !on || !idle || !zeroed || st.live_view.source === "none";
   $("backlash").disabled = !on || !idle;
   const canMove = on && zeroed && idle;   // absolute moves and saving need the zero
   $("goto").querySelector("button").disabled = !canMove;
@@ -129,7 +137,14 @@ function report(m) {
   } else if (m.kind === "run") {
     say(`visited ${r.visited.length} position(s)${r.complete ? "" : `, stopped (${m.stop_reason || "stop"})`}`);
   } else if (m.kind === "zero") {
-    say(`zero set${r.backlash_taken_up ? " (backlash taken up first)" : ""}`);
+    say(`zero set by eye${r.backlash_taken_up ? " (backlash taken up first)" : ""}`);
+  } else if (m.kind === "optical_zero") {
+    say(`zero on the fiducial: corrected by ${deg(r.correction_deg[0])}°, ${deg(r.correction_deg[1])}°; `
+      + `check at (0, 0) ${r.residual_deg.toFixed(3)}°`, r.residual_deg > 0.05 ? "warn" : "");
+  } else if (m.kind === "check_zero") {
+    say(`zero check: fiducial ${r.offset_deg.toFixed(3)}° from (0, 0)`
+      + (r.over_limit ? ` - over ${r.limit_deg}°: the head lost steps, zero on the fiducial again` : ""),
+    r.over_limit ? "bad" : "");
   } else if (r.stopped) {
     say(`${m.kind} stopped${at} (${m.stop_reason || "stop"})`, m.stop_reason === "heartbeat lost" ? "warn" : "");
   } else if (m.kind !== "jog") {
@@ -542,10 +557,17 @@ function wire() {
     }
   });
   $("zero").addEventListener("click", () => {
-    if (st && st.zeroed && !confirm("Replace the current zero? Saved positions refer to the zero "
+    if (st && st.zeroed && !confirm("Replace the current zero by eye? Saved positions refer to the zero "
       + "they were recorded with, so only do this at the same fiducial.")) return;
     act(() => api("POST", "/api/mount/zero", {}));
   });
+  $("zero-optical").addEventListener("click", () => {
+    if (st && st.zeroed && st.zero && st.zero.method === "optical" && !confirm(
+      "Zero on the fiducial again? Do it at the same fiducial: saved positions refer to it.")) return;
+    act(() => api("POST", "/api/mount/zero/optical", {}), "centroiding the fiducial…");
+  });
+  $("zero-check").addEventListener("click", () => act(() => api("POST", "/api/mount/zero/check", {}),
+    "back to (0, 0) to measure the fiducial…"));
   $("backlash").addEventListener("click", () => act(() => api("POST", "/api/mount/backlash", {})));
 
   $("goto").addEventListener("submit", (e) => {

@@ -132,9 +132,28 @@
     </form>
     <dl id="body-info" class="info"></dl>
     <h2 class="sub">Lens geometry</h2>
+    <dl class="info"><dt>Focal length, k1</dt><dd id="lens-state">—</dd></dl>
+    <form id="lens-form" class="typed-k">
+      <div class="row">
+        <label class="stack">Distance to the fiducial, m<input name="distance" type="number" step="any"
+          min="0" inputmode="decimal" required placeholder="e.g. 1.2"></label>
+        <button type="submit" id="lens-go">Measure with the head</button>
+      </div>
+      <p class="hint">Zero on the fiducial first (Movement page). The head then turns over a 5 × 5 grid
+        around it (about ±24° pan, ±17° tilt) and fits focal length and k1 to where the fiducial
+        lands. It rests on the gear ratios, and on live view showing the whole sensor. The head
+        turns about its axes, not the lens: a near fiducial reads the focal length long by
+        about pupil offset ÷ distance unless the offset is set in mount.toml [optical].</p>
+    </form>
+    <div id="lens-result" class="cal-result" hidden></div>
+    <div class="table-wrap"><table class="library">
+      <thead><tr><th>When (UTC)</th><th class="num">Focal, mm</th><th class="num">k1</th>
+        <th class="num">RMS, px</th><th>Status</th></tr></thead>
+      <tbody id="lens-rows"></tbody>
+    </table></div>
     <img id="geometry" class="geometry" alt="Solid angle and position index maps of this lens">
-    <p class="hint">Focal length and k1 are nominal until measured (spot tracking with the head:
-      not built yet). 1 % off in focal length is ~2 % off in every solid angle.</p>
+    <p class="hint">1 % off in focal length is ~2 % off in every solid angle. Typing a focal
+      length or k1 in the profile makes the lens nominal again.</p>
   </section>
 
   <section class="panel log-panel" aria-label="Messages">

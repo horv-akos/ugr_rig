@@ -210,12 +210,15 @@ CIE 117: `UGR = 8 log₁₀(0.25 / L_b · Σ L²ω/p²)`, with the perception sc
 
 ### 2.8 A whole study (`service/study.py`, `pipeline/study.py`)
 
-The home page records a study of every position in a profile: checks, zero (recorded as
-skipped: optical zeroing is not built), calibration shot ("done" when the camera
+The home page records a study of every position in a profile: checks, zero (on the fiducial:
+the datum moves so the fiducial is (0, 0); failed and flagged when it is not found),
+calibration shot ("done" when the camera
 profile has a calibration accepted within 12 h, else skipped and flagged; `k` comes from the
 profile, or the simulator's own when the profile is uncalibrated), a 3 x 3 hemisphere sweep around the forward gaze for
-L_b (§2.6), each position, and the first position again as a repeatability check. Live view is
-off for the whole recording. Each bracket is analysed as it lands, in a worker process, sweep
+L_b (§2.6), each position (with an aim check: a live-view frame against the position's reference
+image), the first position again as a repeatability check, and the drift check (the fiducial
+again, not corrected; above 0.1° every angle is suspect). Live view is off for the whole
+recording, apart from those few frames. Each bracket is analysed as it lands, in a worker process, sweep
 first so every position gets the session L_b; the study's summary gives the highest UGR, how
 many positions are over 19 and 22, and the check's UGR difference. Folder layout:
 `REQUIREMENTS.md` §6.

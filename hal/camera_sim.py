@@ -204,10 +204,14 @@ class CabView:
             halo = r2 <= (r * 2.2) ** 2
             img[halo] = img[halo] * 0.5 + 0.25
             img[r2 <= r * r] = (1.0, 0.98, 0.92)
-        r2 = dist2(*self.FIDUCIAL)
-        img[r2 <= 1.2 ** 2] = (0.95, 0.95, 0.95)
-        img[r2 <= 0.9 ** 2] = (0.0, 0.0, 0.0)
-        img[r2 <= 0.35 ** 2] = (1.0, 1.0, 1.0)
+        # The fiducial with soft edges (pixel coverage), as a lens would blur it: with hard
+        # edges its centroid would snap toward the pixel grid by up to a quarter pixel, and
+        # the optical zero would be tested against an artefact of the simulator.
+        r = np.sqrt(dist2(*self.FIDUCIAL))
+        px = np.float32(self.fov_deg[0] / w)
+        for radius, level in ((1.2, 0.95), (0.9, 0.0), (0.35, 1.0)):
+            a = np.clip((np.float32(radius) - r) / px + 0.5, 0, 1)[:, None]
+            img = img * (1 - a) + np.float32(level) * a
         return (np.clip(img, 0, 1) * 255).astype(np.uint8).reshape(h, w, 3)
 
     def luminance(self, pan_deg: float, tilt_deg: float) -> np.ndarray:

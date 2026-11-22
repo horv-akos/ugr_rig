@@ -24,7 +24,10 @@ def make_rig(tmp_path, time_scale: float = 0.0) -> RigController:
     rig = RigController.from_config("sim", tmp_path, camera="sim", time_scale=time_scale)
     rig.mount.cfg = replace(rig.mount.cfg, settle_ms=0)
     rig.enable()
-    rig.wait(rig.set_zero())
+    # as an operator would: aim near the simulated fiducial (6, -3 from power-up), zero on it
+    rig.wait(rig.nudge("right", 6.2))
+    rig.wait(rig.nudge("down", 2.8))
+    rig.wait(rig.optical_zero(), timeout=60)
     rig.create_profile("cab", "sim")
     for name, pan, tilt in (("dash", 18, -14), ("roof", 0, 45)):
         rig.wait(rig.goto(pan, tilt))
@@ -112,8 +115,13 @@ def test_study_end_to_end(tmp_path):
         st = finish(rig, sid)
         assert st["status"] == "done"
         assert {s["key"]: s["state"] for s in st["steps"]} == {
-            "checks": "done", "zero": "skipped", "calibration": "skipped", "sweep": "done",
-            "positions": "done", "check": "done", "analysis": "done"}
+            "checks": "done", "zero": "done", "calibration": "skipped", "sweep": "done",
+            "positions": "done", "check": "done", "drift": "done", "analysis": "done"}
+        # optical zero at the start, drift at the end, aim at every position
+        assert st["zero"]["offset_deg"] < 0.05 and st["drift"]["offset_deg"] < 0.05
+        assert all(p["aim"]["conclusive"] and p["aim"]["total_deg"] < 0.1 for p in st["positions"])
+        assert st["check"]["aim"]["total_deg"] < 0.1
+        assert not any("drift" in f or "replayed" in f for f in st["flags"])
         assert st["sweep"]["result"]["frames"] == 9 and st["sweep"]["result"]["L_b"] > 0
         assert all(p["state"] == "done" and p["result"]["lb_method"] == "sweep"
                    for p in st["positions"])

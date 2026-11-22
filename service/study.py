@@ -1,7 +1,7 @@
 """Recording and analysing a study: the session sequence of REQUIREMENTS §5.4.
 
     checks -> zero -> calibration shot -> hemisphere sweep -> positions -> check position
-                                                                 \\-> analysis, as brackets land
+           -> drift check                                         \\-> analysis, as brackets land
 
 Recording runs as one motion of the rig controller, so nothing else can move the head or take
 the camera meanwhile, and the usual stop ramps it down. Live view stays off for the whole
@@ -12,10 +12,18 @@ order to a worker process (`pipeline.study`). The sweep is recorded first, so it
 before the first position is analysed. Once recording ends the head is free again, while
 analysis finishes on its own.
 
-Steps that are not built yet are recorded as skipped and flagged rather than faked: optical
-zeroing (the zero is the one set by hand) and the calibration shot (k comes from
-config/analysis.toml, or from the simulator). Without a k the brackets are still recorded and
-the analysis waits; a study can be re-analysed from its own folder later.
+The zero step goes to (0, 0) and centroids the fiducial; the datum moves so the fiducial is
+(0, 0) again, and the correction is recorded. The drift check at the end measures the same
+fiducial without correcting: what is left is what the head lost during the session, and above
+[optical] drift_limit_deg every angle of the study is suspect. When the fiducial cannot be
+found the zero stays the one set by hand, the step fails and the study is flagged: there is
+then no drift figure. At each position a live-view frame is compared with the position's
+reference image (frozen into the study folder): the aim check (pipeline/optical.py). Live view
+is otherwise off for the whole recording; these few frames end it again at once.
+
+Steps that are not built yet are recorded as skipped and flagged rather than faked. Without a k
+the brackets are still recorded and the analysis waits; a study can be re-analysed from its own
+folder later.
 """
 
 from __future__ import annotations
@@ -42,7 +50,7 @@ log = logging.getLogger(__name__)
 
 STEPS = (("checks", "Checks"), ("zero", "Zero"), ("calibration", "Calibration shot"),
          ("sweep", "Hemisphere sweep"), ("positions", "Positions"),
-         ("check", "Check position"), ("analysis", "Analysis"))
+         ("check", "Check position"), ("drift", "Drift check"), ("analysis", "Analysis"))
 LIGHTING = ("dark", "daylight")
 
 
@@ -94,6 +102,8 @@ def new_record(study_id: str, profile: PositionProfile, lighting: str, operator:
                        "state": "pending", "bracket": None, "masks": None, "result": None,
                        "error": None} for p in profile.positions],
         "check": None,
+        "zero": None,
+        "drift": None,
         "processing": {},
         "summary": {},
         "flags": [],
@@ -143,6 +153,11 @@ class StudyRun:
                 (self.dir / "masks").mkdir(exist_ok=True)
                 shutil.copyfile(src, self.dir / "masks" / f"{pos.id}.json")
                 entry["masks"] = f"masks/{pos.id}.json"
+            img = self.rig.profiles.image_path(profile.name, pos)
+            if img.is_file():        # the aim check's reference, frozen with the study
+                (self.dir / "references").mkdir(exist_ok=True)
+                shutil.copyfile(img, self.dir / "references" / f"{pos.id}.jpg")
+                entry["reference"] = f"references/{pos.id}.jpg"
         self.save()
 
     # -- recording (the controller's motion) ---------------------------------- #
@@ -152,8 +167,7 @@ class StudyRun:
         try:
             with self.rig.live.paused() as cam:   # live view off for the whole recording
                 self.step("checks", "done", f"camera {self.rig.live.source}, head zeroed")
-                self.step("zero", "skipped", "zero set by hand; optical zeroing is not built")
-                self.flag("zero set by hand: no optical zero check, so no drift figure")
+                optical_ok = self._zero(cam, stop)
                 self._camera_setup(cam)
 
                 if st["options"]["sweep"]:
@@ -168,6 +182,11 @@ class StudyRun:
                     self._check(cam, stop)
                 elif not st["options"]["check"]:
                     self.step("check", "skipped", "not requested")
+                if not stop.is_set():
+                    if optical_ok:
+                        self._drift(cam, stop)
+                    else:
+                        self.step("drift", "skipped", "no optical zero to check against")
         except Exception as exc:
             with self._lock:
                 st["status"] = "failed"
@@ -191,6 +210,90 @@ class StudyRun:
         self.save()
         return {"study": st["id"], "status": st["status"]}
 
+    def _zero(self, cam, stop: threading.Event) -> bool:
+        """Optical zero at session start. True when the fiducial was found and the zero is
+        now optical, so the drift check at the end means something."""
+        from analysis.spot import SpotNotFound
+        from pipeline.optical import load_optical_config
+
+        self.step("zero", "running", "fiducial at (0, 0)")
+        before = self.rig.zero_info()
+        if not self._goto(0.0, 0.0, stop):
+            return False
+        try:
+            m = self.rig.measure_fiducial(cam)
+        except (SpotNotFound, ValueError) as exc:
+            self.step("zero", "failed", f"fiducial not found: {exc}")
+            self.flag("optical zero failed: the zero is the one set by hand, and the study "
+                      "has no drift figure")
+            return False
+        pan, tilt = self.rig.mount.position()
+        self.rig.mount.set_zero(pan - m.pan_deg, tilt - m.tilt_deg)
+        self.rig.note_zero("optical", m)
+        self.study["zero"] = {"at": now_iso(), "correction_deg": [round(m.pan_deg, 4),
+                                                                 round(m.tilt_deg, 4)],
+                              "offset_deg": round(m.offset_deg, 4), "previous": before,
+                              "fiducial": m.as_dict()}
+        self.step("zero", "done", f"fiducial found; zero corrected by {m.pan_deg:+.3f}, "
+                                  f"{m.tilt_deg:+.3f} deg")
+        limit = load_optical_config().drift_limit_deg
+        if before and before.get("method") == "optical" and m.offset_deg > limit:
+            self.flag(f"the zero moved {m.offset_deg:.2f} deg since it was set at "
+                      f"{before['at']}: the head lost steps, or the fiducial or the rig moved")
+        elif (not before or before.get("method") != "optical") and m.offset_deg > limit:
+            self.flag(f"the zero was set by hand and corrected optically by "
+                      f"{m.offset_deg:.2f} deg: positions saved against a hand zero replay "
+                      "off by about that much, positions saved against an optical zero now "
+                      "replay true")
+        return True
+
+    def _drift(self, cam, stop: threading.Event) -> None:
+        """The same fiducial at the end, not corrected: the session's drift."""
+        from analysis.spot import SpotNotFound
+        from pipeline.optical import load_optical_config
+
+        self.step("drift", "running", "back to (0, 0)")
+        if not self._goto(0.0, 0.0, stop):
+            return
+        limit = load_optical_config().drift_limit_deg
+        try:
+            m = self.rig.measure_fiducial(cam)
+        except (SpotNotFound, ValueError) as exc:
+            self.step("drift", "failed", f"fiducial not found: {exc}")
+            self.flag("drift check failed: fiducial not found at the end; this study's angles "
+                      "are unchecked")
+            return
+        self.rig.note_check(m)
+        self.study["drift"] = {"at": now_iso(), "offset_deg": round(m.offset_deg, 4),
+                               "pan_deg": round(m.pan_deg, 4), "tilt_deg": round(m.tilt_deg, 4),
+                               "limit_deg": limit, "fiducial": m.as_dict()}
+        self.step("drift", "done", f"{m.offset_deg:.3f} deg (limit {limit:g})")
+        if m.offset_deg > limit:
+            self.flag(f"drift {m.offset_deg:.2f} deg at the end, over {limit:g}: the head "
+                      "lost steps during the session; every angle in this study is suspect")
+
+    def _aim(self, cam, entry: dict[str, Any]) -> None:
+        """Frame against the position's reference image: how far replay landed."""
+        from pipeline.optical import aim_offset, load_optical_config
+
+        ref = entry.get("reference")
+        if not ref or not (self.dir / ref).is_file():
+            entry["aim"] = None
+            return
+        cfg = load_optical_config()
+        frame = self.rig.live_frames(cam, 1)[0]
+        ref_bytes = (self.dir / ref).read_bytes()
+        from analysis.spot import gray
+
+        a = aim_offset(ref_bytes, frame, self.rig._frame_geometry(gray(ref_bytes).shape), cfg)
+        entry["aim"] = a
+        if not a["conclusive"]:
+            self.flag(f"aim check inconclusive at {entry['name']} (correlation "
+                      f"{a['peak']:.2f}): the view does not match its reference image")
+        elif a["flag"]:
+            self.flag(f"{entry['name']} replayed {a['total_deg']:.2f} deg off its reference "
+                      f"image (limit {cfg.aim_limit_deg:g})")
+
     def _camera_setup(self, cam) -> None:
         """Put the camera profile's exposure on the body, check the body and lens against
         it, and decide the calibration step: a calibration of this profile within the last
@@ -202,6 +305,9 @@ class StudyRun:
         cam.apply_config(prof.camera_config(load_camera_config()))
         for m in prof.body_check(cam.info()):
             self.flag(m)
+        if not prof.lens_measured_at:
+            self.flag(f"lens geometry nominal ({prof.focal_mm:g} mm, k1 {prof.distortion_k1:g}): "
+                      "not measured with the head; solid angles carry its error twice")
         last = prof.k_history[-1] if prof.k_history else None
         age_h = _age_hours(last.at) if last else None
         if prof.k_source == "typed":
@@ -273,6 +379,7 @@ class StudyRun:
             if not self._goto(pos["pan_deg"], pos["tilt_deg"], stop):
                 pos["state"] = "pending"
                 return
+            self._aim(cam, pos)
             pos["state"] = "capturing"
             self.save()
             rel = f"brackets/{i + 1:02d}_{pos['id']}"
@@ -289,12 +396,15 @@ class StudyRun:
         self.step("check", "running", f"back to {first['name']}")
         if not self._goto(first["pan_deg"], first["tilt_deg"], stop):
             return
+        probe: dict[str, Any] = {"name": f"check: {first['name']}",
+                                 "reference": first.get("reference")}
+        self._aim(cam, probe)
         rel = f"brackets/check_{first['id']}"
         self._shoot(cam, rel, {"region": f"check: {first['name']}", "position_id": first["id"]})
         self.study["check"] = {"id": first["id"], "name": f"check: {first['name']}",
                                "pan_deg": first["pan_deg"], "tilt_deg": first["tilt_deg"],
                                "state": "captured", "bracket": rel, "masks": first["masks"],
-                               "result": None, "error": None}
+                               "aim": probe.get("aim"), "result": None, "error": None}
         self.step("check", "done", f"{first['name']} shot again")
         self._queue.put(("position", self.study["check"]))
 

@@ -193,6 +193,9 @@ function renderStudy() {
     ["Check ΔUGR", sm.check_delta_ugr === null || sm.check_delta_ugr === undefined ? "—"
       : (sm.check_delta_ugr >= 0 ? "+" : "−") + Math.abs(sm.check_delta_ugr).toFixed(2), "", "repeatability"],
     ["L_b", lb ? `${lb.L_b.toFixed(2)}` : "frame", "", lb ? `cd/m² · ${Math.round(100 * lb.coverage_cos_weighted)} % covered` : "provisional"],
+    ["Drift", s.drift ? `${s.drift.offset_deg.toFixed(3)}°` : "—", s.drift && s.drift.offset_deg > s.drift.limit_deg ? "bad" : "",
+      s.drift ? `limit ${s.drift.limit_deg}° · zero ${s.zero ? `corrected ${s.zero.offset_deg.toFixed(2)}°` : "by hand"}`
+        : s.zero ? "not measured" : "no optical zero"],
   ];
   $("summary").replaceChildren(...tiles.map(([k, v, cls, sub]) => el("div", { class: "tile" },
     el("span", { class: "k" }, k), el("span", { class: `v ${cls}` }, v), el("span", { class: "sub muted" }, sub))));
@@ -233,6 +236,9 @@ function renderCards() {
         el("div", { class: "muted small" }, r
           ? `${r.category} · L_b ${r.L_b.toFixed(2)} cd/m² (${r.lb_method}) · ${r.n_sources} source(s)`
           : `pan ${p.pan_deg.toFixed(2)}°, tilt ${p.tilt_deg.toFixed(2)}°`),
+        p.aim ? el("div", { class: `small${p.aim.flag || !p.aim.conclusive ? " warn" : " muted"}`,
+          title: "Live view at this position against its reference image (phase correlation)" },
+        p.aim.conclusive ? `Aim ${p.aim.total_deg.toFixed(2)}° off the reference image` : "Aim check inconclusive") : "",
         top ? el("div", { class: "small" }, `Top source: ${top.name} · ${Math.round(100 * top.share)} % of the glare`
           + (top.delta_ugr !== null && top.delta_ugr !== undefined ? ` · −${top.delta_ugr.toFixed(1)} UGR without it` : "")) : "",
         sens && sens.length ? el("div", { class: "muted small", title: "UGR at other detection thresholds" },

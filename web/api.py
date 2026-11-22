@@ -126,6 +126,16 @@ class Accept(BaseModel):
     calibration: str = Field(min_length=1, max_length=120)
 
 
+class MeasureLens(BaseModel):
+    profile: str = Field(min_length=1, max_length=80)
+    distance_m: float = Field(gt=0, le=1e6)      # head to fiducial
+    wait: bool = False
+
+
+class AcceptLens(BaseModel):
+    lensfit: str = Field(min_length=1, max_length=120)
+
+
 class TypedK(BaseModel):
     k: float = Field(gt=0, lt=10)
     note: str = Field(min_length=1, max_length=300)
@@ -243,6 +253,16 @@ def create_app(rig: RigController) -> FastAPI:
     @app.post("/api/mount/zero")
     def zero(body: Wait | None = None) -> dict[str, Any]:
         return motion(rig.set_zero(), bool(body and body.wait))
+
+    @app.post("/api/mount/zero/optical")
+    def zero_optical(body: Wait | None = None) -> dict[str, Any]:
+        """Zero on the fiducial: aim roughly at it first (within [optical] search_deg)."""
+        return motion(rig.optical_zero(), bool(body and body.wait))
+
+    @app.post("/api/mount/zero/check")
+    def zero_check(body: Wait | None = None) -> dict[str, Any]:
+        """Go to (0, 0) and measure the fiducial, correcting nothing: the drift so far."""
+        return motion(rig.check_zero(), bool(body and body.wait))
 
     @app.post("/api/mount/backlash")
     def backlash(body: Wait | None = None) -> dict[str, Any]:
@@ -362,6 +382,19 @@ def create_app(rig: RigController) -> FastAPI:
     @app.post("/api/camera/profiles/{name}/accept")
     def accept(name: str, body: Accept) -> dict[str, Any]:
         return cam_view(rig.accept_calibration(name, body.calibration))
+
+    @app.post("/api/camera/lens/measure")
+    def measure_lens(body: MeasureLens) -> dict[str, Any]:
+        """Track the fiducial over a grid of poses and fit focal length and k1."""
+        return motion(rig.measure_lens(body.profile, body.distance_m), body.wait)
+
+    @app.get("/api/camera/lens/fits")
+    def lens_fits(profile: str | None = None) -> list[dict[str, Any]]:
+        return rig.lens_fits(profile)
+
+    @app.post("/api/camera/profiles/{name}/lens")
+    def accept_lens(name: str, body: AcceptLens) -> dict[str, Any]:
+        return cam_view(rig.accept_lens(name, body.lensfit))
 
     @app.post("/api/camera/profiles/{name}/k")
     def typed_k(name: str, body: TypedK) -> dict[str, Any]:

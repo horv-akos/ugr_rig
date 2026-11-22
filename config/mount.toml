@@ -65,3 +65,17 @@ accel_deg_s2 = 5.0
 start_speed_deg_s = 0.25
 backlash_deg = 0.5              # MEASURE
 approach_sign = 1
+
+[optical]
+# Optical zero, drift check, aim check and lens tracking (pipeline/optical.py,
+# docs/PIVOT_DETAIL.md §5). Measured on live-view frames.
+search_deg = 3.0                # the fiducial must lie within this of where the zero expects it
+max_spot_deg = 3.0              # anything larger is not the fiducial
+min_contrast = 40.0             # live-view grey levels above the surroundings
+frames = 3                      # frames per measurement, after one discarded
+drift_limit_deg = 0.1           # end-of-session residual above this: the session's angles are suspect
+aim_limit_deg = 0.2             # replay offset above this flags the position. Starting value:
+                                # set it from the repeatability run (PIVOT_DETAIL §8.4)
+aim_min_peak = 0.05             # phase-correlation peak below this: aim check inconclusive
+pupil_offset_mm = 0.0           # MEASURE: lens entrance pupil in front of the tilt axis, for the
+                                # parallax in the lens fit. 0 = not measured (use a far spot)

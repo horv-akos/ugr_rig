@@ -52,6 +52,28 @@ class CameraGeometry:
                    pitch_mm=cfg.sensor.pixel_pitch_um * 1e-3 * cfg.processing.binning,
                    focal_mm=cfg.lens.focal_mm, k1=cfg.lens.distortion_k1)
 
+    @classmethod
+    def for_frame(cls, width: int, height: int, sensor_width_mm: float, focal_mm: float,
+                  k1: float = 0.0) -> "CameraGeometry":
+        """A frame of any size that shows the whole sensor width, e.g. a live-view frame."""
+        return cls(width=width, height=height, pitch_mm=sensor_width_mm / width,
+                   focal_mm=focal_mm, k1=k1)
+
+    def project(self, d: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """Camera-frame directions (..., 3) -> pixel coordinates (u, v); the inverse of
+        `pixel_directions`. The radial term is inverted by Newton steps."""
+        d = np.asarray(d, np.float64)
+        xt, yt = d[..., 0] / d[..., 2], d[..., 1] / d[..., 2]
+        rt = np.hypot(xt, yt)
+        r = rt.copy()
+        for _ in range(8):                      # r (1 + k1 r^2) = rt
+            r -= (r * (1 + self.k1 * r * r) - rt) / (1 + 3 * self.k1 * r * r)
+        s = np.divide(r, rt, out=np.ones_like(rt), where=rt > 0)
+        cx = (self.width - 1) / 2 if self.cx is None else self.cx
+        cy = (self.height - 1) / 2 if self.cy is None else self.cy
+        scale = self.focal_mm / self.pitch_mm
+        return cx + xt * s * scale, cy - yt * s * scale
+
     def _normalised(self, u: np.ndarray, v: np.ndarray):
         cx = (self.width - 1) / 2 if self.cx is None else self.cx
         cy = (self.height - 1) / 2 if self.cy is None else self.cy

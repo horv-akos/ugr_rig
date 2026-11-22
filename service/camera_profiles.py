@@ -66,6 +66,8 @@ class CameraProfile:
     focal_mm: float = 18.0
     distortion_k1: float = 0.0
     vignetting_map: str = ""
+    lens_measured_at: str = ""     # when focal_mm and k1 were measured with the head; "" = nominal
+    lens_fit: str = ""             # the lens measurement they came from (<data>/lensfits/<id>)
     aperture: float = 8.0
     iso: int = 100
     shutter: tuple[str, ...] = ()
@@ -144,6 +146,14 @@ class CameraProfile:
         if "iso" in c:
             c["iso"] = int(c["iso"])
         p = replace(self, **c, updated_at=now_iso())
+        if (p.focal_mm, p.distortion_k1) != (self.focal_mm, self.distortion_k1):
+            p = replace(p, lens_measured_at="", lens_fit="")    # typed: nominal again
+        p.validate()
+        return p
+
+    def with_lens(self, focal_mm: float, k1: float, at: str, fit_id: str) -> "CameraProfile":
+        p = replace(self, focal_mm=float(focal_mm), distortion_k1=float(k1),
+                    lens_measured_at=at, lens_fit=fit_id, updated_at=now_iso())
         p.validate()
         return p
 
@@ -203,7 +213,9 @@ class CameraProfile:
                  f"updated_at = {s(self.updated_at)}", "",
                  "[lens]", f"focal_mm = {f(self.focal_mm)}",
                  f"distortion_k1 = {f(self.distortion_k1)}",
-                 f"vignetting_map = {s(self.vignetting_map)}", "",
+                 f"vignetting_map = {s(self.vignetting_map)}",
+                 f"measured_at = {s(self.lens_measured_at)}   # empty: nominal",
+                 f"fit = {s(self.lens_fit)}", "",
                  "[exposure]", f"aperture = {f(self.aperture)}", f"iso = {self.iso}",
                  "shutter = [" + ", ".join(s(x) for x in self.shutter) + "]",
                  f"shutter_model = {s(self.shutter_model)}", "",
@@ -240,6 +252,7 @@ class CameraProfile:
             focal_mm=float(lens.get("focal_mm", 18.0)),
             distortion_k1=float(lens.get("distortion_k1", 0.0)),
             vignetting_map=str(lens.get("vignetting_map", "")),
+            lens_measured_at=str(lens.get("measured_at", "")), lens_fit=str(lens.get("fit", "")),
             aperture=float(exp.get("aperture", 8.0)), iso=int(exp.get("iso", 100)),
             shutter=tuple(str(x) for x in exp.get("shutter", ())),
             shutter_model=str(exp.get("shutter_model", "apex")),

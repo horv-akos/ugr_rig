@@ -66,7 +66,7 @@ ugr_rig/
 │                 · session sequence, analysis worker, camera profiles (built)
 ├── storage/      data directory, profiles, SQLite index, study archive, exports
 ├── report/       images (photo, maps, boxes, masks, UGR stamp) · Excel (built) · PDF
-├── pipeline/     region (built) · study, optical zeroing, recovery
+├── pipeline/     region · study · optical: zero, drift, aim, lens tracking (built) · recovery
 ├── tests/        pytest: camera control flow against a fake libgphoto2, synthetic end to end
 └── web/          FastAPI: HTTP API, live view, movement, home and camera pages (built)
 ```
@@ -115,12 +115,12 @@ where to point the laptop's browser. Bound to 127.0.0.1 over SSH it says how to 
 | Live view (camera preview), MJPEG stream | **Built**; simulated cab on the desk; gphoto2 preview tested against a fake libgphoto2 only, confirm on the body |
 | Jog, nudge, speed and controlled stop in `hal/mount.py`; `service/` + HTTP API; `rigctl` | **Built**, sim-tested; not yet on hardware |
 | Measure the built head (`docs/PIVOT_DETAIL.md` §8) | After assembly |
-| `storage` + session sequence + analysis worker (`service/study.py`, `pipeline/study.py`) | **Built**, sim-tested; optical zero and drift check recorded as skipped; calibration shot from an accepted calibration within 12 h |
+| `storage` + session sequence + analysis worker (`service/study.py`, `pipeline/study.py`) | **Built**, sim-tested; optical zero, aim check and drift check (2026-11-22); calibration shot from an accepted calibration within 12 h |
 | Reflections in detection, forward-gaze combination | Not started |
 | `report`: photo, contribution map, source map, masks, UGR stamp, Excel; re-analysis | **Built**, sim-tested; CR2 photo untested; PDF not started |
-| `web`: movement calibration page, reference images, mask editor | **Built**, sim-tested; tiling, coverage map and aim check to come |
+| `web`: movement calibration page, reference images, mask editor, zero on the fiducial, zero check | **Built**, sim-tested; tiling and coverage map to come |
 | `web`: home page (start a study, steps, results, library, zip) | **Built**, sim-tested |
-| `web`: camera page: camera profiles, `k` from the target, estimated from the ISO rating, or typed in, `k` history, lens geometry maps | **Built**, sim-tested; lens geometry by spot tracking and vignetting not started |
+| `web`: camera page: camera profiles, `k` from the target, estimated from the ISO rating, or typed in, `k` history, lens geometry maps | **Built**, sim-tested; lens geometry by spot tracking built 2026-11-22; vignetting not started |
 
 ---
 
