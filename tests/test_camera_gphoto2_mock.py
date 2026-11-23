@@ -15,6 +15,8 @@ import tempfile
 import types
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 FRAME_BYTES = 6_000_000
@@ -26,7 +28,7 @@ def make_fake_gp(mode="Manual", busy_on_first_capture=True, truncate=False):
         GP_CAPTURE_IMAGE=0, GP_FILE_TYPE_NORMAL=1, GP_EVENT_TIMEOUT=0,
         GP_ERROR_CAMERA_BUSY=-110, GP_ERROR_NOT_SUPPORTED=-6, GP_ERROR_MODEL_NOT_FOUND=-105,
         GP_ERROR_IO_USB_FIND=-52, GP_ERROR_IO_USB_CLAIM=-53, GP_ERROR_IO=-7,
-        GP_ERROR_TIMEOUT=-10,
+        GP_ERROR_TIMEOUT=-10, GP_WIDGET_TEXT=2, GP_WIDGET_RADIO=5, GP_WIDGET_MENU=6,
     )
 
     class GPhoto2Error(Exception):
@@ -73,6 +75,9 @@ def make_fake_gp(mode="Manual", busy_on_first_capture=True, truncate=False):
             if ch is None:
                 raise GPhoto2Error(-2)
             return iter(ch)
+
+        def get_type(self):
+            return gp.GP_WIDGET_TEXT if settings[self.name][1] is None else gp.GP_WIDGET_RADIO
 
         def get_readonly(self):
             return settings[self.name][2]
@@ -199,6 +204,58 @@ def test_refuses_wrong_mode():
         raise AssertionError("connected with the dial on Av")
 
 
+def _refuse_power_off(gp, code):
+    """The 2000D: autopoweroff is a text widget, and writing it fails every time."""
+    gp.autopoweroff_writes = 0
+    original = gp.Camera.set_single_config
+
+    def set_single_config(self, name, w):
+        if name == "autopoweroff":
+            gp.autopoweroff_writes += 1
+            raise gp.GPhoto2Error(code)
+        original(self, name, w)
+
+    gp.Camera.set_single_config = set_single_config
+
+
+def test_refused_auto_power_off_is_only_a_warning(caplog):
+    gp, settings, _ = make_fake_gp()
+    settings["autopoweroff"] = ("30", None, False)
+    _refuse_power_off(gp, gp.GP_ERROR_CAMERA_BUSY)
+    _, cam = _camera(gp)
+    cam.connect()
+    assert "auto power off" in caplog.text
+    assert settings["aperture"][0] == "8"
+    tried = gp.autopoweroff_writes
+    cam.apply_config(cam.config)              # a camera profile: no second round of waiting
+    assert gp.autopoweroff_writes == tried
+
+
+def test_lost_link_during_auto_power_off_still_raises():
+    gp, settings, _ = make_fake_gp()
+    settings["autopoweroff"] = ("30", None, False)
+    _refuse_power_off(gp, gp.GP_ERROR_IO)
+    camera_mod, cam = _camera(gp)
+    with pytest.raises(camera_mod.CameraDisconnected):
+        cam.connect()
+
+
+def test_busy_on_a_required_setting_still_raises(monkeypatch):
+    gp, _, _ = make_fake_gp()
+    camera_mod, cam = _camera(gp)
+    monkeypatch.setattr(camera_mod.time, "sleep", lambda s: None)
+    original = gp.Camera.set_single_config
+
+    def set_single_config(self, name, w):
+        if name == "iso":
+            raise gp.GPhoto2Error(gp.GP_ERROR_CAMERA_BUSY)
+        original(self, name, w)
+
+    gp.Camera.set_single_config = set_single_config
+    with pytest.raises(camera_mod.CameraBusy):
+        cam.connect()
+
+
 def test_truncated_download():
     gp, _, log = make_fake_gp(truncate=True, busy_on_first_capture=False)
     camera_mod, cam = _camera(gp)
@@ -214,7 +271,4 @@ def test_truncated_download():
 
 
 if __name__ == "__main__":
-    for name, fn in list(globals().items()):
-        if name.startswith("test_"):
-            fn()
-            print(f"ok  {name}")
+    raise SystemExit(pytest.main([__file__, "-q"]))

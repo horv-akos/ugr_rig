@@ -230,6 +230,7 @@ class Gphoto2Camera:
     }
     TARGET_CHOICES = {"ram": "Internal RAM", "card": "Memory card"}
     BUSY_RETRIES = 10
+    OPTIONAL_RETRIES = 2    # settings the rig works without: do not wait 3 s for a refusal
 
     def __init__(self, config: CameraConfig) -> None:
         self.config = config
@@ -239,6 +240,7 @@ class Gphoto2Camera:
         self._log_cb = None
         self._choice_cache: dict[str, list[str]] = {}
         self._preview_on = False
+        self._power_off_refused = False
 
     # -- connection ---------------------------------------------------------- #
 
@@ -253,6 +255,7 @@ class Gphoto2Camera:
         except gp.GPhoto2Error as exc:
             raise self._translate(exc, "connect") from exc
         self._cam = cam
+        self._power_off_refused = False
         self._names = self._resolve_names()
         self._check_body()
         self._apply_static_settings()
@@ -297,14 +300,15 @@ class Gphoto2Camera:
             return CameraDisconnected(f"{what}: USB link lost ({exc})")
         return CameraError(f"{what}: {exc}")
 
-    def _call(self, what: str, fn, *args):
+    def _call(self, what: str, fn, *args, tries: int | None = None):
         """Run a gphoto2 call, retrying while the body reports busy."""
         gp = self._gp
-        for attempt in range(self.BUSY_RETRIES):
+        tries = tries or self.BUSY_RETRIES
+        for attempt in range(tries):
             try:
                 return fn(*args)
             except gp.GPhoto2Error as exc:
-                if exc.code == gp.GP_ERROR_CAMERA_BUSY and attempt < self.BUSY_RETRIES - 1:
+                if exc.code == gp.GP_ERROR_CAMERA_BUSY and attempt < tries - 1:
                     time.sleep(0.3)
                     continue
                 raise self._translate(exc, what) from exc
@@ -368,14 +372,18 @@ class Gphoto2Camera:
 
     def _choices(self, key: str) -> list[str]:
         if key not in self._choice_cache:
+            gp = self._gp
             _, w = self._widget(key)
             try:
-                self._choice_cache[key] = [str(c) for c in w.get_choices()]
+                # text and range widgets have no list; asking logs a libgphoto2 error
+                self._choice_cache[key] = (
+                    [str(c) for c in w.get_choices()]
+                    if w.get_type() in (gp.GP_WIDGET_RADIO, gp.GP_WIDGET_MENU) else [])
             except self._gp.GPhoto2Error:
                 self._choice_cache[key] = []
         return self._choice_cache[key]
 
-    def _set(self, key: str, value: str) -> None:
+    def _set(self, key: str, value: str, tries: int | None = None) -> None:
         name, w = self._widget(key)
         if w.get_readonly():
             raise CameraSetupError(f"{name} is read-only on this body")
@@ -385,7 +393,7 @@ class Gphoto2Camera:
         if str(w.get_value()) == value:
             return
         w.set_value(value)
-        self._call(f"set {name}={value}", self._write, name, w)
+        self._call(f"set {name}={value}", self._write, name, w, tries=tries)
         self._drain_events(0.05)
         got = str(self._widget(key)[1].get_value())
         if got != value:
@@ -436,14 +444,26 @@ class Gphoto2Camera:
                 self._set("wb", cfg.white_balance)
             except CameraSetupError as exc:
                 log.warning("white balance not set: %s", exc)
-        if "autopoweroff" in self._names:
-            try:
-                self._set("autopoweroff", "0")
-            except CameraSetupError:
-                log.warning("could not disable auto power off; set it to Disable on the body")
+        self._disable_auto_power_off()
         # check every bracket speed exists before the first frame, not halfway through
         for label in cfg.exposure.shutter:
             nearest_choice(parse_shutter(label), self._choices("shutter"))
+
+    def _disable_auto_power_off(self) -> None:
+        """Best effort. The 2000D lists the property but answered ten writes in a row with
+        "busy" (first run on the body, 2026-11-23), so a refusal only warns and is not retried
+        on this connection. A lost link still raises."""
+        if "autopoweroff" not in self._names or self._power_off_refused:
+            return
+        try:
+            self._set("autopoweroff", "0", tries=self.OPTIONAL_RETRIES)
+        except (CameraDisconnected, CameraNotFound):
+            raise
+        except CameraError as exc:
+            self._power_off_refused = True
+            log.warning("could not disable auto power off over USB (%s); set it to Disable "
+                        "in the body's menu", exc)
+            self._drain_events(0.05)
 
     def info(self) -> dict[str, Any]:
         out = {k: self._get(k) for k in

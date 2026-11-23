@@ -25,7 +25,7 @@ The 2000D does not expose these over PTP, so they are set by hand and the code c
 | Highlight Tone Priority | Off | Changes raw exposure and the ISO floor | Indirectly: EXIF ISO check fails |
 | Long exp. noise reduction | Off | Doubles the 1 s and 4 s frames; data is fine either way | No |
 | Exposure level increments | 1/3 stop (default) | The APEX shutter model assumes it | No |
-| Auto power off | Disable | A sleeping body drops off USB | Code tries to set it |
+| Auto power off | Disable | A sleeping body drops off USB | Code tries, and only warns if refused (the 2000D answered "busy"): set it by hand |
 
 ### 1.2 What the code sets
 
