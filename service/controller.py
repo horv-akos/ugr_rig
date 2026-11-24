@@ -299,7 +299,7 @@ class RigController:
             self._require_idle()
             if self.live.camera is None:
                 raise RigError("no camera: start the server with --camera sim or gphoto2")
-            cid = f"{now_iso().replace(':', '').replace('-', '')}-{slug(prof.name)}"
+            cid = _new_id(self.calibrations_dir, prof.name)
             d = self.calibrations_dir / cid
 
             def run(stop: threading.Event) -> dict[str, Any]:
@@ -755,7 +755,7 @@ class RigController:
                 raise RigError("no camera: the lens measurement needs live view")
             if not self.mount.is_zeroed:
                 raise RigError("zero on the fiducial first: the lens is measured around it")
-            fid = f"{now_iso().replace(':', '').replace('-', '')}-{slug(prof.name)}"
+            fid = _new_id(self.lensfits_dir, prof.name)
             ocfg = optical.load_optical_config()
             sensor = load_analysis_config().sensor
             sensor_w = sensor.pixel_pitch_um * 1e-3 * sensor.width_px
@@ -1235,6 +1235,17 @@ def sim_pose(sim: SimBackend, cfg: MountConfig) -> Callable[[], tuple[float, flo
         return out[0], out[1]
 
     return pose
+
+
+def _new_id(root: Path, profile: str) -> str:
+    """Folder name for a new record: time to the second, so a number is added when that name
+    is taken. Sorts in the order made. The caller holds the lock and has checked the rig idle."""
+    base = f"{now_iso().replace(':', '').replace('-', '')}-{slug(profile)}"
+    rid, n = base, 1
+    while (root / rid).exists():
+        n += 1
+        rid = f"{base}-{n}"
+    return rid
 
 
 def _direction(direction: str) -> tuple[str, int]:

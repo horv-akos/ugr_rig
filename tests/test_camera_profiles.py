@@ -112,6 +112,19 @@ def test_calibration_recovers_k_and_accept_records_it(tmp_path):
         rig.close()
 
 
+def test_calibrations_in_the_same_second_do_not_overwrite_each_other(tmp_path, monkeypatch):
+    monkeypatch.setattr("service.controller.now_iso", lambda: "2026-11-24T10:00:00Z")
+    rig = rig_at_display(tmp_path)
+    try:
+        a, b = calibrate(rig, luminance=900.0), calibrate(rig, luminance=800.0)
+        name = rig.camera_profile().name
+        assert [r["id"] for r in rig.calibrations(name)] == [b["id"], a["id"]]   # newest first
+        assert rig.accept_calibration(name, a["id"]).k == a["measurement"]["k"]
+        assert a["measurement"]["k"] != b["measurement"]["k"]
+    finally:
+        rig.close()
+
+
 def test_iso_estimate_on_the_simulator_is_offered_and_flagged(tmp_path):
     rig = rig_at_display(tmp_path)
     try:
