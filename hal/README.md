@@ -55,6 +55,24 @@ mountctl drivers                   # configure + read back, drivers stay off
 mountctl --backend sim drivers     # the same against SimTmcBus
 ```
 
+## Holding still (`mountctl hold`)
+
+```
+mountctl hold                      # energise both axes and hold; Ctrl-C twice releases
+mountctl goto 0 20 --hold          # move, then hold the same way (also jog, ratio,
+                                   # backlash, repeat: results are logged first)
+```
+
+Holds the head where it stands at `hold_current_a`, without steps or a zero, and runs
+`check_drivers()` every second (`--interval`). The first Ctrl-C only asks you to support
+the camera: the tilt gears back-drive, so releasing drops an unbalanced one. A driver
+problem is printed and the hold goes on, except when the mount itself releases the motors
+(`DriverNotConfigured`); the exit code is then 1. SIGTERM releases at once. Run it with the
+rig server stopped: opening the mount switches the motors off first, and the two would
+fight over ENABLE and the UART. Over SSH, run it in `tmux`: a dropped session kills the
+process without releasing, so the motors should stay on with nothing checking them (not
+tried).
+
 ## Use
 
 ```python

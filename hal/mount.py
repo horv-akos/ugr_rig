@@ -418,6 +418,13 @@ class PanTiltMount:
         self._stop = stop or threading.Event()
         return self._stop
 
+    def check_drivers(self) -> list[str]:
+        """The check made before every motion, for a head that is held without moving. Same
+        consequences; returns the warnings."""
+        with self._lock:
+            self._check_drivers()
+            return list(self.driver_warnings)
+
     def _check_drivers(self) -> None:
         """Before every motion: a driver reset (motor rail cycled) means the motors were
         unpowered, so the position is marked uncertain and the move refused; faults refuse

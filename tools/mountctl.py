@@ -6,6 +6,7 @@ Run from the repository root:
     python -m tools.mountctl --backend sim selftest
     python -m tools.mountctl info
     python -m tools.mountctl goto 30 -10
+    python -m tools.mountctl hold
 
 The measurement subcommands (ratio, backlash, repeat, limits) are the
 procedures in docs/PIVOT_DETAIL.md §8. They prompt for digital angle gauge
@@ -19,21 +20,26 @@ import argparse
 import csv
 import dataclasses
 import logging
+import signal
 import statistics
 import sys
 import time
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from hal.backend import SimBackend, create_backend  # noqa: E402
-from hal.config import load_config  # noqa: E402
+from hal.config import MountConfig, load_config  # noqa: E402
 from hal.motion import AxisPlan, build_chunks, plan_timeline, step_times  # noqa: E402
-from hal.mount import CHUNK_US, PanTiltMount, install_signal_handlers  # noqa: E402
+from hal.mount import (CHUNK_US, MountError, PanTiltMount,  # noqa: E402
+                       install_signal_handlers)
 from hal import tmc2209  # noqa: E402
 
 LOG_DIR = Path("measurements")
+HOLD_CHECK_S = 1.0     # between driver checks while holding
+HOLD_HELP = "afterwards, hold until Ctrl-C is pressed twice"
 
 
 # --------------------------------------------------------------------------- #
@@ -41,8 +47,8 @@ LOG_DIR = Path("measurements")
 # --------------------------------------------------------------------------- #
 
 
-def open_mount(args) -> PanTiltMount:
-    cfg = load_config(args.config)
+def open_mount(args, cfg: MountConfig | None = None) -> PanTiltMount:
+    cfg = cfg or load_config(args.config)
     kwargs = {}
     if args.backend == "sim":
         kwargs["time_scale"] = args.time_scale
@@ -160,8 +166,8 @@ def cmd_goto(args) -> int:
             f"({result.motion_s:.2f} s motion"
             f"{', two-stage approach' if result.backlash_stage else ''})"
         )
-        if not args.hold:
-            mount.disable()
+        if args.hold:
+            return hold_until_released(mount)
     return 0
 
 
@@ -174,9 +180,86 @@ def cmd_jog(args) -> int:
         tilt_steps = cfg.tilt.deg_to_steps(args.tilt)
         print(f"jogging {pan_steps} pan / {tilt_steps} tilt steps")
         mount.jog_steps(pan_steps, tilt_steps)
-        if not args.hold:
-            mount.disable()
+        if args.hold:
+            return hold_until_released(mount)
     return 0
+
+
+def hold_loop(mount: PanTiltMount, interval_s: float, released: Callable[[], bool],
+              poll_s: float = 0.2) -> int:
+    """Keep an enabled mount energised until `released()`, checking the drivers every
+    `interval_s`. Letting go drops the camera, so a problem is reported and the hold goes on;
+    it ends early only when the mount itself released the motors because their configuration
+    is no longer proven. Returns how many problems were seen (a lasting one counts once)."""
+    problems = 0
+    last = None
+    due = time.monotonic() + interval_s
+    while not released():
+        time.sleep(poll_s)
+        if time.monotonic() < due:
+            continue
+        due = time.monotonic() + interval_s
+        try:
+            warnings = mount.check_drivers()
+            said = "warning: " + "; ".join(warnings) if warnings else None
+        except (MountError, OSError) as exc:      # OSError: pyserial, the port itself failed
+            said = f"PROBLEM: {exc}"
+            # every reset is its own event: the motors let go each time
+            if said != last or isinstance(exc, tmc2209.DriverReset):
+                problems += 1
+                last = None
+        if said != last:
+            print(f"{datetime.now():%H:%M:%S}  {said or 'drivers OK again'}", flush=True)
+            last = said
+        if not mount.enabled:
+            print("MOTORS RELEASED: support the camera", flush=True)
+            break
+    return problems
+
+
+def hold_until_released(mount: PanTiltMount, interval_s: float = HOLD_CHECK_S) -> int:
+    """Keep an enabled mount energised until Ctrl-C has been pressed twice: the tilt gears
+    back-drive, so letting go drops an unbalanced camera. The caller releases, by closing the
+    mount. Exit code: 1 if the drivers reported a problem meanwhile."""
+    presses = 0
+    asked = False
+
+    def on_sigint(signum, frame) -> None:
+        nonlocal presses
+        presses += 1                  # only count: a UART exchange may be under way
+
+    def released() -> bool:
+        nonlocal asked
+        if presses == 1 and not asked:
+            asked = True
+            print("\nsupport the camera, then press Ctrl-C again to release", flush=True)
+        return presses >= 2
+
+    previous = signal.signal(signal.SIGINT, on_sigint)
+    try:
+        for name, r in mount.drivers.report.items():
+            print(f"  {name:5s} holding at {r['hold_current_a']:.3f} A")
+        print("holding. Ctrl-C twice to release", flush=True)
+        problems = hold_loop(mount, interval_s, released)
+    finally:
+        signal.signal(signal.SIGINT, previous)
+    print(f"releasing{f', {problems} problem(s) seen' if problems else ''}", flush=True)
+    return 1 if problems else 0
+
+
+def cmd_hold(args) -> int:
+    """Energise both axes where they stand and hold them. No steps are sent and no zero is
+    set."""
+    if args.interval <= 0:
+        print("--interval must be above 0")
+        return 2
+    with open_mount(args) as mount:
+        try:
+            mount.enable()
+        except MountError as exc:
+            print(f"FAILED, motors off: {exc}")
+            return 1
+        return hold_until_released(mount, args.interval)
 
 
 def cmd_ratio(args) -> int:
@@ -197,28 +280,30 @@ def cmd_ratio(args) -> int:
         mount.move_to(args.deg if args.axis == "pan" else 0.0,
                       args.deg if args.axis == "tilt" else 0.0)
         measured = ask_float(f"gauge reading after a commanded {args.deg:+.2f} deg")
-        if not args.hold:
-            mount.disable()
 
-    if measured == 0:
-        print("measured zero - nothing moved, check wiring and Vref")
-        return 1
-    true_ratio = axis.gear_ratio * args.deg / measured
-    true_spd = axis.motor_steps_per_rev * axis.microsteps * true_ratio / 360.0
-    err = 100.0 * (measured - args.deg) / args.deg
-    print(
-        f"\ncommanded {args.deg:+.3f} deg, measured {measured:+.3f} deg ({err:+.2f}%)\n"
-        f"configured ratio {axis.gear_ratio:.5f} -> measured {true_ratio:.5f}\n"
-        f"steps/deg       {axis.steps_per_deg:.4f} -> {true_spd:.4f}"
-    )
-    for teeth, label in ((64 / 21, "64:21 herringbone"), (123 / 16, "123:16 belt")):
-        if abs(true_ratio - teeth) / teeth < 0.05:
-            print(f"within 5% of {label} ({teeth:.5f})")
-    print(
-        f"\nto use the measured value, in [axis.{axis.name}] of {cfg.source}:\n"
-        f"  gear_ratio = {true_ratio:.6f}\n"
-        f"and comment out gear_teeth_driver / gear_teeth_driven"
-    )
+        if measured == 0:
+            print("measured zero - nothing moved, check wiring and Vref")
+            if args.hold:
+                hold_until_released(mount)
+            return 1
+        true_ratio = axis.gear_ratio * args.deg / measured
+        true_spd = axis.motor_steps_per_rev * axis.microsteps * true_ratio / 360.0
+        err = 100.0 * (measured - args.deg) / args.deg
+        print(
+            f"\ncommanded {args.deg:+.3f} deg, measured {measured:+.3f} deg ({err:+.2f}%)\n"
+            f"configured ratio {axis.gear_ratio:.5f} -> measured {true_ratio:.5f}\n"
+            f"steps/deg       {axis.steps_per_deg:.4f} -> {true_spd:.4f}"
+        )
+        for teeth, label in ((64 / 21, "64:21 herringbone"), (123 / 16, "123:16 belt")):
+            if abs(true_ratio - teeth) / teeth < 0.05:
+                print(f"within 5% of {label} ({teeth:.5f})")
+        print(
+            f"\nto use the measured value, in [axis.{axis.name}] of {cfg.source}:\n"
+            f"  gear_ratio = {true_ratio:.6f}\n"
+            f"and comment out gear_teeth_driver / gear_teeth_driven"
+        )
+        if args.hold:
+            return hold_until_released(mount)
     return 0
 
 
@@ -228,7 +313,6 @@ def cmd_backlash(args) -> int:
     Backlash compensation is switched off for the test, otherwise it hides the
     thing being measured.
     """
-    cfg = load_config(args.config)
     axis_name = args.axis
     raw = load_config(args.config)
     patched = dataclasses.replace(
@@ -236,10 +320,8 @@ def cmd_backlash(args) -> int:
         pan=dataclasses.replace(raw.pan, backlash_deg=0.0),
         tilt=dataclasses.replace(raw.tilt, backlash_deg=0.0),
     )
-    backend_kw = {"time_scale": args.time_scale} if args.backend == "sim" else {}
     rows = []
-    with PanTiltMount(patched, create_backend(args.backend, **backend_kw)) as mount:
-        install_signal_handlers(mount)
+    with open_mount(args, patched) as mount:
         mount.enable()
         mount.set_zero()
         print(f"\nzero the gauge on {axis_name} at 0 deg.")
@@ -266,17 +348,17 @@ def cmd_backlash(args) -> int:
                 }
             )
             print(f"    backlash {from_above - from_below:+.4f} deg")
-        if not args.hold:
-            mount.disable()
 
-    values = [abs(r["backlash_deg"]) for r in rows]
-    mean = statistics.fmean(values)
-    print(f"\nmean backlash {mean:.4f} deg over {len(values)} cycles")
-    if len(values) > 1:
-        print(f"spread {min(values):.4f} .. {max(values):.4f} deg")
-    print(f"suggested config: backlash_deg = {mean * 1.5:.3f}  (1.5x mean)")
-    path = log_rows(f"backlash_{axis_name}", list(rows[0]), rows)
-    print(f"logged to {path}")
+        values = [abs(r["backlash_deg"]) for r in rows]
+        mean = statistics.fmean(values)
+        print(f"\nmean backlash {mean:.4f} deg over {len(values)} cycles")
+        if len(values) > 1:
+            print(f"spread {min(values):.4f} .. {max(values):.4f} deg")
+        print(f"suggested config: backlash_deg = {mean * 1.5:.3f}  (1.5x mean)")
+        path = log_rows(f"backlash_{axis_name}", list(rows[0]), rows)
+        print(f"logged to {path}")
+        if args.hold:
+            return hold_until_released(mount)
     return 0
 
 
@@ -301,20 +383,20 @@ def cmd_repeat(args) -> int:
                     "return_error_deg": round(back_home, 4),
                 }
             )
-        if not args.hold:
-            mount.disable()
 
-    targets = [r["target_reading_deg"] for r in rows]
-    homes = [r["home_reading_deg"] for r in rows]
-    print(
-        f"\ntarget spread {max(targets)-min(targets):.4f} deg"
-        f"  (sd {statistics.pstdev(targets):.4f})\n"
-        f"home   spread {max(homes)-min(homes):.4f} deg"
-        f"  (sd {statistics.pstdev(homes):.4f})\n"
-        "this is the floor on session-to-session comparability - put it in the report"
-    )
-    path = log_rows("repeatability", list(rows[0]), rows)
-    print(f"logged to {path}")
+        targets = [r["target_reading_deg"] for r in rows]
+        homes = [r["home_reading_deg"] for r in rows]
+        print(
+            f"\ntarget spread {max(targets)-min(targets):.4f} deg"
+            f"  (sd {statistics.pstdev(targets):.4f})\n"
+            f"home   spread {max(homes)-min(homes):.4f} deg"
+            f"  (sd {statistics.pstdev(homes):.4f})\n"
+            "this is the floor on session-to-session comparability - put it in the report"
+        )
+        path = log_rows("repeatability", list(rows[0]), rows)
+        print(f"logged to {path}")
+        if args.hold:
+            return hold_until_released(mount)
     return 0
 
 
@@ -512,6 +594,24 @@ def cmd_selftest(args) -> int:
         check("position marked uncertain after a reset", not mount.position_certain)
         check("drivers reconfigured after the reset",
               all(d.microsteps == cfg.pan.microsteps for d in sim_bus.drivers.values()))
+    bus = tmc2209.create_drivers("sim", cfg.drivers, (cfg.pan, cfg.tilt))
+    sim5 = SimBackend()
+    with PanTiltMount(cfg, sim5, bus) as mount:
+        mount.enable()
+        polls = iter(range(6))
+        held: list[bool] = []
+
+        def released() -> bool:
+            i = next(polls)
+            if i == 2:
+                bus.port.power_cycle()            # motor rail dips while holding
+            held.append(sim5.levels[cfg.pins.enable] == 0)
+            return i == 5
+
+        problems = hold_loop(mount, 0.0, released, poll_s=0.01)
+        check("hold: stays energised through a rail dip, and reports it once",
+              all(held) and len(held) == 6 and problems == 1)
+        check("hold: sends no steps", not any(sim5.rising_edges.values()))
     silent = tmc2209.create_drivers("sim", cfg.drivers, (cfg.pan, cfg.tilt))
     silent.port.vmot = False
     m2 = PanTiltMount(cfg, SimBackend(), silent)
@@ -582,19 +682,24 @@ def main(argv=None) -> int:
     g.add_argument("--assume-pan", type=float, default=0.0,
                    help="degrees the head is currently at")
     g.add_argument("--assume-tilt", type=float, default=0.0)
-    g.add_argument("--hold", action="store_true", help="leave the drivers energised")
+    g.add_argument("--hold", action="store_true", help=HOLD_HELP)
     g.set_defaults(fn=cmd_goto)
 
     j = sub.add_parser("jog", help="relative move, no datum, no limit check")
     j.add_argument("--pan", type=float, default=0.0)
     j.add_argument("--tilt", type=float, default=0.0)
-    j.add_argument("--hold", action="store_true")
+    j.add_argument("--hold", action="store_true", help=HOLD_HELP)
     j.set_defaults(fn=cmd_jog)
+
+    h = sub.add_parser("hold", help="energise and hold until Ctrl-C is pressed twice")
+    h.add_argument("--interval", type=float, default=HOLD_CHECK_S,
+                   help="seconds between driver checks over UART")
+    h.set_defaults(fn=cmd_hold)
 
     r = sub.add_parser("ratio", help="verify a gear ratio against the angle gauge (§8.1)")
     r.add_argument("--axis", choices=["pan", "tilt"], required=True)
     r.add_argument("--deg", type=float, default=30.0)
-    r.add_argument("--hold", action="store_true")
+    r.add_argument("--hold", action="store_true", help=HOLD_HELP)
     r.set_defaults(fn=cmd_ratio)
 
     b = sub.add_parser("backlash", help="measure backlash (§8.3)")
@@ -602,14 +707,14 @@ def main(argv=None) -> int:
     b.add_argument("--at", type=float, default=0.0, help="target angle")
     b.add_argument("--swing", type=float, default=5.0, help="approach distance")
     b.add_argument("--repeats", type=int, default=3)
-    b.add_argument("--hold", action="store_true")
+    b.add_argument("--hold", action="store_true", help=HOLD_HELP)
     b.set_defaults(fn=cmd_backlash)
 
     rep = sub.add_parser("repeat", help="angular repeatability (§8.4)")
     rep.add_argument("--pan", type=float, default=30.0)
     rep.add_argument("--tilt", type=float, default=15.0)
     rep.add_argument("-n", type=int, default=10)
-    rep.add_argument("--hold", action="store_true")
+    rep.add_argument("--hold", action="store_true", help=HOLD_HELP)
     rep.set_defaults(fn=cmd_repeat)
 
     args = p.parse_args(argv)

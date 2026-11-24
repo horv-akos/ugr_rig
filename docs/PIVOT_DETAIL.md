@@ -248,6 +248,7 @@ class PanTiltMount:
     def wait_idle(self, timeout=None) -> bool
     def position(self) -> tuple[float, float]
     def status(self) -> dict                        # includes backlash_ok per axis
+    def check_drivers(self) -> list[str]            # the pre-move driver check, while holding
     # properties: enabled, is_zeroed, position_certain
     # raises: NotZeroed, SoftLimit, MoveAborted (all MountError)
 ```
@@ -304,6 +305,6 @@ Numbered for reference; do them in the order listed. `tools/mountctl.py` covers 
    the centroid stops moving. Needs the camera; not in `mountctl`.
 - **8.6 Run and hold current** with the real lens fitted, set over UART: enough torque not to stall,
    low enough to keep the driver cool during holds. Check the tilt axis does not creep during a
-   full bracket at the chosen hold current.
+   full bracket at the chosen hold current. `mountctl hold` energises and holds without moving.
 - **8.7 Payload** — tested to just over 1 kg, a7 body is 474 g, so ~500 g of lens.
 - **8.8 Motor mount clearance** for the 35 mm motor body, before assembly. **Done: clears.**
