@@ -103,6 +103,79 @@ def test_mount_configures_before_enable_and_checks_before_moves():
     m.close()
 
 
+def lose_write(b: t.DriverBus, addr: int, reg: int) -> None:
+    """The next write to that register is echoed but never accepted (noise, or another reset)."""
+    sim = b.port
+    real = sim.write
+
+    def write(data: bytes) -> None:
+        if len(data) == 8 and data[1] == addr and data[2] == reg | 0x80:
+            sim.write = real
+            sim._rx += data
+            return
+        real(data)
+
+    sim.write = write
+
+
+def test_a_reset_that_cannot_be_reconfigured_stops_the_head():
+    """Seen on the bench 2026-11-24: a reset on energising, then "accepted 3 of 4 writes". The
+    failed attempt still cleared the reset flag, so the next move ran at 1/256."""
+    b, sim = bus(), SimBackend()
+    m = PanTiltMount(CFG, sim, b)
+    m.enable()
+    m.set_zero()
+    b.port.power_cycle()
+    lose_write(b, 1, t.CHOPCONF)
+    with pytest.raises(t.DriverNotConfigured, match="pan and tilt driver reset.*3 of 4 writes"):
+        m.move_to(0.0, 5.0)
+    assert not b.port.drivers[1].regs[t.GSTAT] & t.GSTAT_RESET   # why the flag is not enough
+    assert not m.enabled and not m.is_zeroed and not m.position_certain
+    assert sim.levels[CFG.pins.enable] == 1                      # motors off
+    edges = dict(sim.rising_edges)
+    with pytest.raises(MountError):
+        m.move_to(0.0, 5.0)
+    with pytest.raises(MountError, match="not enabled"):
+        m.jog_steps(10, 0)
+    with pytest.raises(t.DriverNotConfigured):
+        b.check()
+    assert sim.rising_edges == edges                             # nothing stepped
+    m.enable()                                                   # verified again
+    assert [d.microsteps for d in b.port.drivers.values()] == [16, 16]
+    assert not m.position_certain
+    m.set_zero()
+    m.move_to(0.0, 1.0)
+    assert m.position_certain
+    m.close()
+
+
+def test_enabling_again_does_not_hide_a_reset():
+    b = bus()
+    m = PanTiltMount(CFG, SimBackend(), b)
+    m.enable()
+    m.set_zero()
+    b.port.power_cycle()
+    with pytest.raises(t.DriverReset):
+        m.enable()
+    assert not m.position_certain
+    m.enable()
+    assert m.enabled and not m.position_certain
+    m.close()
+
+
+def test_enabling_again_releases_when_it_cannot_verify():
+    b, sim = bus(), SimBackend()
+    m = PanTiltMount(CFG, sim, b)
+    m.enable()
+    m.set_zero()
+    b.port.ignore_writes = True
+    with pytest.raises(t.DriverMismatch):
+        m.enable()
+    assert not m.enabled and not m.position_certain
+    assert sim.levels[CFG.pins.enable] == 1
+    m.close()
+
+
 def test_real_hardware_without_a_driver_bus_will_not_enable():
     """Anything that is not the pulse simulator counts as real hardware."""
     sim = SimBackend()

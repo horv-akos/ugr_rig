@@ -103,7 +103,8 @@ talks to hardware, so it is always testable on a desk against stored brackets.
 - **Do not move the real head** until `mountctl drivers` has verified the driver config over
   UART on the bench (`deploy/README.md` §5). Without it, PAN runs 1/8 and TILT 1/32
   microstepping. `PanTiltMount.enable()` configures and verifies first, and refuses on real
-  hardware without a driver bus; the UART path is so far tested against `SimTmcBus` only.
+  hardware without a driver bus; verified on the real drivers 2026-11-24. A reset that cannot be
+  reconfigured releases the motors and blocks moves until `enable()` verifies (`DriverNotConfigured`).
 - **Pi 4 only.** pigpio has no Pi 5 support.
 - **Provenance:** anything that can change a number (threshold, k, lens constants, masks version,
   frame hashes) goes into `result.json`. New parameters go into `AnalysisConfig.snapshot()`

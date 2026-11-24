@@ -153,13 +153,14 @@ pigpio. UART carries settings only, never motion.
   why the read-back is mandatory.
 - The driver needs VMOT to communicate, and resets to strap defaults whenever VMOT drops (rocker
   off). Check GSTAT before each move; on a reset flag, reconfigure and mark position uncertain.
+  If that reconfigure fails, release the motors and refuse every move until both drivers verify.
 - DRV_STATUS is polled for over-temperature pre-warning, open load and short.
 - StallGuard is not used: unreliable at ~5 °/s. The optical drift check stays the integrity check.
 
 Implementation: own thin layer, `hal/tmc2209.py` on pyserial (BSD), TMC2209 datasheet as the
 spec. Built 2026-11-20 and tested against a simulated bus (`SimTmcBus`, including the single-wire
-echo); IHOLD_IRUN is write-only, so writes are verified with the IFCNT write counter. Not yet
-run against the real drivers: `mountctl drivers` on the bench first.
+echo); IHOLD_IRUN is write-only, so writes are verified with the IFCNT write counter. Verified on
+the real drivers with `mountctl drivers` on 2026-11-24.
 
 ---
 

@@ -40,7 +40,11 @@ silence or a mismatch the drivers stay off.
 
 Before every motion `check()` reads GSTAT and DRV_STATUS. A reset (motor rail
 cycled) is reconfigured, the position marked uncertain and the move refused
-(`DriverReset`); over-temperature or a short refuses it too (`DriverFault`);
+(`DriverReset`). If configuring again fails, the motors are released (support the
+tilt axis: it can drop), the zero is dropped and nothing moves until `enable()`
+has verified both drivers (`DriverNotConfigured`). Enabling an already enabled
+head checks first, so it cannot hide a reset. Over-temperature or a short refuses
+the move too (`DriverFault`);
 pre-warnings and open load show in `status()["drivers"]["warnings"]`.
 
 Real hardware without a driver bus will not enable at all; the pulse simulator
@@ -154,9 +158,9 @@ Settle time (§8.2) needs the camera and is not in here.
 
 ## Known gaps
 
-- **The driver UART is tested against `SimTmcBus` only.** Framing and CRC match
-  the datasheet's example, but nothing has talked to a real TMC2209 yet. Run
-  `mountctl drivers` on the bench (motor rail on) before the first move.
+- **A driver reset on energising is unexplained.** `mountctl drivers` verifies both
+  real drivers and both motors turn (2026-11-24), but one `goto` saw a reset right
+  after ENABLE and a lost TILT write. Motor supply suspected, not confirmed.
 - Aborting mid-move estimates the stopping point from elapsed time within the
   interrupted wave. It is flagged uncertain rather than trusted.
 - `jog_steps()` bypasses limits and backlash by design. Bench use only.

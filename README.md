@@ -112,7 +112,7 @@ where to point the laptop's browser. Bound to 127.0.0.1 over SSH it says how to 
 | Step | Status |
 |---|---|
 | `hal/` mount: config, motion, pigpio/sim backends, `mountctl` | **Built**, sim-tested; not yet on hardware |
-| `hal/tmc2209.py` — UART driver config, `mountctl drivers` | **Built**, tested against a simulated bus; not yet on the drivers |
+| `hal/tmc2209.py` — UART driver config, `mountctl drivers` | **Built**; verified on both real drivers (2026-11-24). Open: a reset seen once on energising |
 | Pi deployment: systemd units, UART, WiFi access point (`deploy/`) | Written; not yet tried on the Pi |
 | `photometry` + `analysis` + metrics, `pipeline/region.py`, `ugrctl` | **Built**, validated on synthetic brackets; needs real CR2s, the target and the meter |
 | `hal/camera.py` — gphoto2 against the 2000D; this is where the surprises live | **Built**, tested against a fake libgphoto2; not yet on the body |

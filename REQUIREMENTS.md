@@ -354,7 +354,7 @@ The Pi generates step/dir directly through pigpio; all motion logic is Python. S
 - Configure both drivers over UART (microstepping, run/hold current) and read the settings back
   before enabling; refuse to enable on mismatch or no answer
 - Detect a driver reset (motor rail cycled) before each move; reconfigure and mark position
-  uncertain
+  uncertain; if reconfiguring fails, release the motors and refuse moves until both verify
   (both built 2026-11-20 in `hal/tmc2209.py`, against a simulated bus; currents in
   `[axis.*]` of mount.toml are MEASURE placeholders until §8.6)
 

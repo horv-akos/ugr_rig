@@ -172,12 +172,18 @@ class PanTiltMount:
     def enable(self) -> None:
         """Configure the drivers over UART and verify it, then energise them. They stay
         energised so nothing creeps. Raises (drivers stay off) if the configuration cannot
-        be verified, or if real hardware has no driver bus at all."""
+        be verified, or if real hardware has no driver bus at all. Already enabled, it checks
+        first: configuring clears the reset flag, and a reset must not pass unnoticed."""
         if self.drivers is None and not isinstance(self._b, SimBackend):
             raise MountError("no driver UART: without its configuration the drivers run 1/8 "
                              "and 1/32 microstepping, so the head will not be enabled")
         if self.drivers is not None:
-            self.drivers.configure()
+            self._check_drivers()  # does nothing unless already enabled
+            try:
+                self.drivers.configure()
+            except MountError:
+                self._release_unverified()
+                raise
             self.driver_warnings = []
         pins = self.cfg.pins
         self._b.write(pins.enable, 0 if pins.enable_active_low else 1)
@@ -192,6 +198,13 @@ class PanTiltMount:
         self._enabled = False
         self._zeroed = False
         self._lash = {"pan": None, "tilt": None}
+
+    def _release_unverified(self) -> None:
+        """The drivers no longer provably hold their configuration: motors off, datum gone,
+        so nothing moves until enable() has verified them and the zero is set again."""
+        if self._enabled:
+            self._certain = False
+            self.disable()
 
     # -- datum ------------------------------------------------------------ #
 
@@ -408,7 +421,8 @@ class PanTiltMount:
     def _check_drivers(self) -> None:
         """Before every motion: a driver reset (motor rail cycled) means the motors were
         unpowered, so the position is marked uncertain and the move refused; faults refuse
-        too. Warnings (pre-warning temperature, open load) are kept for status()."""
+        too. A reset that cannot be reconfigured releases the motors. Warnings (pre-warning
+        temperature, open load) are kept for status()."""
         if self.drivers is None or not self._enabled:
             return
         from .tmc2209 import DriverReset
@@ -417,6 +431,10 @@ class PanTiltMount:
             self.driver_warnings = self.drivers.check()
         except DriverReset:
             self._certain = False
+            raise
+        except MountError:
+            if not self.drivers.configured:
+                self._release_unverified()
             raise
 
     def _require_enabled(self) -> None:

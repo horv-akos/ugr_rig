@@ -77,6 +77,11 @@ class DriverReset(DriverError):
     motors were unpowered meanwhile, so the position is no longer certain."""
 
 
+class DriverNotConfigured(DriverError):
+    """A driver reset and could not be configured again, so its microstepping is unknown. The
+    mount releases the motors; no move runs until `configure()` has verified both drivers."""
+
+
 class DriverFault(DriverError):
     """Over-temperature shutdown or a short: the driver has switched its outputs off."""
 
@@ -351,8 +356,14 @@ class DriverBus:
 
     def check(self) -> list[str]:
         """Before a move. A reset means the motor rail was cycled: reconfigure, then raise
-        DriverReset so the caller marks the position uncertain. Over-temperature shutdown and
-        shorts raise DriverFault; pre-warnings and open load come back as warnings."""
+        DriverReset so the caller marks the position uncertain. If that reconfigure fails,
+        DriverNotConfigured, and again on every later check until `configure()` succeeds: the
+        failed attempt may already have cleared the reset flag, so the flag alone cannot be
+        trusted. Over-temperature shutdown and shorts raise DriverFault; pre-warnings and open
+        load come back as warnings."""
+        if not self.configured:
+            raise DriverNotConfigured("the drivers are not configured and verified: "
+                                      "enable them again")
         warnings: list[str] = []
         reset = []
         for axis in self.axes:
@@ -373,7 +384,13 @@ class DriverBus:
             if st & (OLA | OLB):
                 warnings.append(f"{axis.name}: open load (motor disconnected?)")
         if reset:
-            self.configure()
+            try:
+                self.configure()
+            except DriverError as exc:
+                raise DriverNotConfigured(
+                    f"{' and '.join(reset)} driver reset (motor rail dip?) and configuring "
+                    f"again failed ({exc}): motors released. Check the motor supply, enable "
+                    "again and set the zero") from exc
             raise DriverReset(f"{' and '.join(reset)} driver reset (motor rail cycled?): "
                               "reconfigured, but the motors were unpowered, so the position "
                               "is uncertain. Set the zero again")

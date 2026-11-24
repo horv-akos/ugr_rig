@@ -261,7 +261,8 @@ Rules:
 - **The TMC2209 needs VMOT to talk.** With the motor rail off, UART is silent. Configure only
   after the rocker is on.
 - **Cycling the motor rail resets the drivers** to strap defaults (1/8 and 1/32). Check GSTAT
-  before every move; if a reset is flagged, reconfigure and mark the position uncertain.
+  before every move; if a reset is flagged, reconfigure and mark the position uncertain. If that
+  fails, the motors are released and nothing moves until both drivers verify again.
 - Hold current is applied at standstill, i.e. during the bracket. Lowering it risks tilt creep
   under a heavy lens — measure before relying on it (`PIVOT_DETAIL.md` §8.6).
 
