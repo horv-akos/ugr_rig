@@ -215,7 +215,8 @@ Eight wires leave the board, all motor phases. No signal wiring travels with the
 | XH2.54 4-pin, TILT | coil A pair, coil B pair | NEMA 17, tilt |
 
 **Confirm coil pairs with a multimeter before crimping** — continuity means same coil. Swapping
-a whole pair only reverses direction, which is the `invert` flag in `config/mount.toml`.
+a whole pair only reverses direction, which is the `invert` flag in `config/mount.toml`
+(pan: `true` on the built head).
 
 ### 4.5 PSU to board and Pi
 

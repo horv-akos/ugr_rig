@@ -35,6 +35,12 @@ def test_plain_ratio(tmp_path):
     assert cfg.tilt.steps_per_deg == pytest.approx(200 * 16 * 3.05 / 360)
 
 
+def test_shipped_pan_sense_matches_the_built_head():
+    """Seen on the head 2026-11-25: pan needs inverting for positive to turn right."""
+    cfg = load_config()
+    assert cfg.pan.invert and not cfg.tilt.invert
+
+
 @pytest.mark.parametrize("gear", [
     "gear_ratio = 3.05\ngear_teeth_driver = 21\ngear_teeth_driven = 64",  # both
     "gear_teeth_driver = 21",                                             # half a pair

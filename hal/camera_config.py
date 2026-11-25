@@ -118,6 +118,33 @@ class ExposureConfig:
 
 
 @dataclass(frozen=True)
+class LiveViewConfig:
+    """Shutter control for live view (hal/live_exposure.py). No bracket frame uses it."""
+
+    auto_exposure: bool = True
+    shutter_start: str = "1/60"
+    shutter_fastest: str = "1/4000"
+    shutter_slowest: str = "4"
+    target_level: int = 110
+    highlight_fraction: float = 0.05
+    deadband_ev: float = 0.5
+    settle_frames: int = 3
+
+    def validate(self) -> None:
+        if not (parse_shutter(self.shutter_fastest) <= parse_shutter(self.shutter_start)
+                <= parse_shutter(self.shutter_slowest)):
+            raise ValueError("live_view: shutter_start must lie between fastest and slowest")
+        if not 1 <= self.target_level <= 254:
+            raise ValueError("live_view.target_level must be 1..254")
+        if not 0 <= self.highlight_fraction < 1:
+            raise ValueError("live_view.highlight_fraction must be 0..1")
+        if self.deadband_ev < 1 / 3:
+            raise ValueError("live_view.deadband_ev must be at least 1/3, the shutter's step")
+        if self.settle_frames < 0:
+            raise ValueError("live_view.settle_frames must not be negative")
+
+
+@dataclass(frozen=True)
 class CameraConfig:
     model: str
     capture_target: str
@@ -128,6 +155,7 @@ class CameraConfig:
     min_file_bytes: int
     exif_check: bool
     exposure: ExposureConfig
+    live_view: LiveViewConfig = field(default_factory=LiveViewConfig)
     source: Path | None = None
 
     def snapshot(self) -> dict[str, Any]:
@@ -158,6 +186,8 @@ def load_camera_config(path: str | Path | None = None) -> CameraConfig:
                             for k, v in exp.get("shutter_correction", {}).items()},
     )
     exposure.validate()
+    live_view = LiveViewConfig(**raw.get("live_view", {}))
+    live_view.validate()
     target = str(cam.get("capture_target", "card"))
     if target not in ("card", "ram"):
         raise ValueError("camera.capture_target must be 'card' or 'ram'")
@@ -171,5 +201,6 @@ def load_camera_config(path: str | Path | None = None) -> CameraConfig:
         min_file_bytes=int(cam.get("min_file_bytes", 5_000_000)),
         exif_check=bool(cam.get("exif_check", True)),
         exposure=exposure,
+        live_view=live_view,
         source=path,
     )

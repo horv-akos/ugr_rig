@@ -20,7 +20,8 @@ The 2000D does not expose these over PTP, so they are set by hand and the code c
 | Setting | Value | Why | Checked by code |
 |---|---|---|---|
 | Mode dial | **M** | Shutter, aperture and ISO must be under software control | Yes — refuses to connect otherwise |
-| Lens AF/MF switch | **MF**, focused | AF hunting in a dark cab blocks the shutter; refocusing moves the image | Warning only (reporting varies by body) |
+| Lens AF/MF switch | **MF**, focused | AF hunting in a dark cab blocks the shutter; refocusing moves the image | Warning only: `focusmode` read `One Shot`, then `Manual` once set to MF (2026-11-23) |
+| Lens STABILIZER switch | **Off, taped** | The rig's lens is the IS II: a moving element can shift the image between frames and sessions | No |
 | Zoom ring | **18 mm, taped** | Focal length enters every solid angle | No |
 | Highlight Tone Priority | Off | Changes raw exposure and the ISO floor | Indirectly: EXIF ISO check fails |
 | Long exp. noise reduction | Off | Doubles the 1 s and 4 s frames; data is fine either way | No |
@@ -93,12 +94,27 @@ the body. Capture takes the camera through `LiveView.paused()`. Errors (dial off
 asleep) show on the page and are retried every 2 s. `/api/live.mjpg` is the stream,
 `/api/live.jpg` one frame.
 
+**Exposure.** With the dial on M the body shows live view at the brightness of the set exposure,
+and nothing chose a shutter for it (4 s is left after every bracket). Live view was seen very
+overexposed on the body (2026-11-25); this is the likely cause, inferred from the code and not yet
+confirmed there. `hal/live_exposure.py` now meters the live-view frames and moves the **shutter
+only**, between `shutter_fastest` and `shutter_slowest` of `[live_view]` in `camera.toml`: the frame
+mean to `target_level`, and at most `highlight_fraction` of the frame clipped, whichever asks for
+less. ISO and aperture stay the bracket's, and each bracket frame sets its own shutter, so no
+result depends on it. The first frame of a live view waits up to 2.5 s for the exposure. The
+movement page shows the shutter in use, "still too bright/dark" at the end of the range, and
+"exposure not controlled" when the body refused the writes. `auto_exposure = false` turns it off.
+If the body's own exposure simulation is off, the shutter has no effect on the picture and the
+page ends at "still too bright" if it was white.
+
 `FakeCamera.preview()` renders `CabView`, a night cab drawn on the sphere around the head, for
 wherever the simulated head points, with a fiducial dot 6° right and 3° below the power-up pose
 to practise zeroing on. It is illustrative only, not the bracket scene.
 
-Tested against a fake libgphoto2 only. Still to confirm on the body: that preview works, its
-frame size and rate, and that `viewfinder` = 0 hands back to normal capture.
+The tests use a fake libgphoto2. Live view has run on the body (2026-11-25); still to confirm there: its
+frame size and rate, that `viewfinder` = 0 hands back to normal capture, that `shutterspeed` is
+writable during live view and changes its brightness, and how many frames that takes
+(`settle_frames`).
 
 ## 2. Processing
 
@@ -272,11 +288,12 @@ ugrctl sweep DIR... [-o J]
 |---|---|
 | Synthetic end to end (`selftest`) | k recovered to 0.01 %; background luminance median error 0.6 %; source luminances within 0.1 %; UGR equal to ground truth (17.32 vs 17.32); clipped LED flagged; window excluded; apex vs label timing seams detected |
 | Camera control flow | Against a fake libgphoto2 (`tests/`): settings order, busy retry, verified-before-delete, wrong mode refused, truncated download refused, live view ended before the bracket |
-| **Not tested** | The real 2000D, real CR2 files, the real colour matrix, real shutter timing, processing speed on the Pi 4 (desktop: ~8 s per region at full size) |
+| On the body (2026-11-23, on the Pi) | `ugrctl camera info`: connects, every `Gphoto2Camera.KEYS` name found, 1/3-stop shutter list with all 8 bracket speeds, f/8, ISO 100, RAW and memory card set. Which of those were written and which already stood was not recorded |
+| **Not tested** | A bracket and the live-view shutter control on the real 2000D, real CR2 files, the real colour matrix, real shutter timing, processing speed on the Pi 4 (desktop: ~8 s per region at full size) |
 
 ## 6. Next on the body
 
-1. `ugrctl camera info` — confirm config names and writability; adjust `Gphoto2Camera.KEYS` if needed
+1. `ugrctl camera info`: done 2026-11-23, no change to `Gphoto2Camera.KEYS`
 2. One bracket of a static scene; check the frame-to-frame ratios in `result.json`
 3. Raw clip level at ISO 100 → `saturation_fraction`
 4. Focal length and k1 from a chart; vignetting map from a flat field at f/8

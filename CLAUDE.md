@@ -41,6 +41,7 @@ Run all three selftests and pytest before calling a change done.
 
 ```
 hal/         ONLY layer that touches hardware
+  live_exposure.py                           shutter for live view, metered on its frames
   config.py motion.py backend.py mount.py    pan-tilt head (pigpio step/dir) + SimBackend;
                                              jog, nudge, speed, stop() ramp-down, backlash state
   camera_config.py camera.py camera_sim.py   2000D over python-gphoto2 + FakeCamera;
@@ -118,11 +119,15 @@ talks to hardware, so it is always testable on a desk against stored brackets.
 
 ## Conventions that bite
 
-- Mount angles: **pan positive = camera turns right, tilt positive = camera looks up.** Camera
+- Mount angles: **pan positive = camera turns right, tilt positive = camera looks up.** The
+  built head needs `[axis.pan] invert = true` for that (2026-11-25). Camera
   frame: x right, y up, z along the optical axis; image rows run downwards.
 - Mask/ROI polygons are **normalised 0..1, origin top left**, so they survive a binning change.
 - Shutter: labels are rounded. `"1/60"` is timed as 1/64 s, and the merge uses `t_effective_s`
   (APEX model), never `t_marked_s`.
+- In M, live view is as bright as the set shutter makes it, and a bracket leaves 4 s behind.
+  `hal/live_exposure.py` moves the shutter for live view; never ISO or aperture (`k` depends on
+  them). Bracket frames set their own shutter.
 - Working resolution is the 2×2 Bayer superpixel (3000 × 2000). Geometry pitch = raw pitch × binning.
 - Position index: sources **below** the line of sight have lower p (count more) than above.
 - Two UGRs: per position along the camera axis (stamped on that position's images), per study
@@ -178,27 +183,29 @@ asking: the Pi installs from wheels on a microSD card. Approved: XlsxWriter for 
 (2026-11-19); FastAPI + uvicorn for the server (httpx for its tests). The web frontend is fully
 offline: no CDN, no Node build step (so FastAPI's /docs pages are switched off).
 
-## Status (2026-11-22)
+## Status (2026-11-23)
 
 Built and sim-tested: mount (incl. jog, nudge, speed, controlled stop, backlash tracking), the
 rig server (`service/` + `web/api.py`) and `rigctl`, live view (simulated cab on the desk), the
 movement calibration page at `/movement` with reference images and the mask editor, glazing
 masks read by detection (excluded and flagged for now), studies end to end (home page at
 `/home`: session sequence, sweep L_b, analysis in a worker process, results, library, zip;
-study folders + SQLite index), camera control (fake libgphoto2 only), the whole processing
+study folders + SQLite index), camera control (fake libgphoto2; `camera info` passes on
+the real 2000D), the whole processing
 chain for one position with metrics, report images and the Excel workbook, re-analysis,
 camera profiles and the camera page at `/camera` (k from the target, accepted into the profile;
 a study uses one accepted within 12 h as its calibration shot), optical zero, drift check and
 aim check, lens geometry measured with the head, reflections in the glazing, the forward-gaze
 UGR with coverage and a tiling proposal, the PDF report, the raw zip, the comparison view,
-profile copy, the shutdown button (deploy: sudoers file), `rigctl study`, `ugrctl`. Not yet run on the real 2000D, on real CR2s, or on
-the Pi.
+profile copy, the shutdown button (deploy: sudoers file), `rigctl study`, `ugrctl`. Live view has run
+on the real 2000D (2026-11-25, overexposed; its shutter control is not yet confirmed there). Not
+yet run: a bracket on the real 2000D, real CR2s.
 
 Plan v0.6 is recorded in `REQUIREMENTS.md` (decided 2026-11-19): live view from the camera's own
 feed, motor control service with hold-to-move jog and position profiles, three web pages,
 windscreen reflections, forward-gaze study rating, report images, metrics, Excel.
 
-Next, roughly in order (`REQUIREMENTS.md` §8): camera on the body (`camera info`, one bracket,
-live view); `mountctl drivers` on the bench, then the head measurements; Pi setup per
+Next, roughly in order (`REQUIREMENTS.md` §8): camera on the body (`camera info` done; one
+bracket, live view); `mountctl drivers` on the bench, then the head measurements; Pi setup per
 `deploy/README.md`. The desk batches 1-6 are done; what is left needs the hardware or a
 decision (`REQUIREMENTS.md` §9: reflection threshold, coverage target, fiducial, RTC).

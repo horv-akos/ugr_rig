@@ -248,7 +248,16 @@ function renderLive() {
   else if (lv.state === "starting" || !img.naturalWidth) msg = "Starting live view…";
   $("live-msg").textContent = msg;
   $("live-info").textContent = lv.state === "running"
-    ? `${lv.source === "sim" ? "simulated" : "camera"} · ${lv.fps} fps` : lv.state;
+    ? `${lv.source === "sim" ? "simulated" : "camera"} · ${lv.fps} fps${exposureText(lv.exposure)}`
+    : lv.state;
+}
+
+// The shutter the camera runs live view at. No effect on a measurement.
+function exposureText(e) {
+  if (!e) return "";
+  const note = !e.auto ? ", exposure not controlled"
+    : e.at_limit ? `, still too ${e.at_limit}` : "";
+  return ` · ${e.shutter}${e.shutter.includes("/") ? "" : " s"}${note}`;
 }
 
 function liveError() {

@@ -36,7 +36,8 @@ enable_active_low = true        # 10k pull-up holds the drivers off when the Pi 
 gear_teeth_driver = 17          # motor pinion
 gear_teeth_driven = 144         # base gear -> 8.4706, 75.29 steps/deg
 # gear_ratio = 8.470588
-invert = false                  # flip if positive degrees turn the wrong way
+invert = true                   # positive pan = camera turns right. The built head turned left
+                                # with false (seen 2026-11-25)
 uart_address = 0                # MS1 = MS2 = GND
 run_current_a = 0.6             # MEASURE (PIVOT_DETAIL §8.6): RMS; QSH4218-35-10-027 is rated 1.0 A
 hold_current_a = 0.3            # MEASURE: applied during the bracket; too low and tilt creeps

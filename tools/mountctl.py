@@ -498,7 +498,8 @@ def cmd_selftest(args) -> int:
             for _, gpio, lv in sim.edge_log
             if gpio == cfg.pins.pan_step
         }
-        check("pan DIR held high for a positive move", dir_levels == {1})
+        check("pan DIR held at the positive level (see invert)",
+              dir_levels == {0 if cfg.pan.invert else 1}, f"{dir_levels}")
 
         # Reversing must cost extra steps: overshoot past the target, come back.
         start_steps, _ = mount.position_steps()

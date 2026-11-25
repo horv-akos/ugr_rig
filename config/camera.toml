@@ -37,3 +37,15 @@ shutter_model = "apex"
 # a ratio that is consistently off at one speed belongs here.
 [exposure.shutter_correction]
 # "1/4000" = 1.00
+
+[live_view]
+# Shutter for live view only: metered on its frames (hal/live_exposure.py), because in M the
+# body shows live view as bright as the set exposure. ISO and aperture stay the bracket's.
+auto_exposure = true
+shutter_start = "1/60"          # first live view of a connection; then the last one used
+shutter_fastest = "1/4000"
+shutter_slowest = "4"
+target_level = 110              # mean of the frame, grey levels 0..255
+highlight_fraction = 0.05       # at most this much of the frame may clip
+deadband_ev = 0.5               # no change within this
+settle_frames = 3               # MEASURE: frames the body takes to show a new shutter

@@ -16,7 +16,7 @@ matters more than any single absolute number. Every design decision below follow
 | | |
 |---|---|
 | Controller | Raspberry Pi 4, 8 GB — headless, onboard WiFi as access point, 128 GB microSD (OS + raw archive) |
-| Camera | Canon EOS 2000D + EF-S 18–55 mm taped at 18 mm (64 × 45°), USB tether, gphoto2/PTP for settings, shutter, live view and CR2 download |
+| Camera | Canon EOS 2000D + EF-S 18–55 mm IS II, stabiliser off, taped at 18 mm (64 × 45°), USB tether, gphoto2/PTP for settings, shutter, live view and CR2 download |
 | Motion | 2-axis pan-tilt head, isaac879 CAD (MIT), 2× NEMA 17 (QSH4218-35) + TMC2209. Step/dir straight off Pi GPIO via pigpio; driver settings over UART |
 | Zeroing | Optical — the camera images a fixed fiducial and the offset becomes the datum |
 | Calibration | Certified lux meter + diffuse panel of known reflectance |
@@ -115,8 +115,8 @@ where to point the laptop's browser. Bound to 127.0.0.1 over SSH it says how to 
 | `hal/tmc2209.py` — UART driver config, `mountctl drivers`, `mountctl hold` | **Built**; configuration verified on both real drivers (2026-11-24), `hold` sim-tested only. Open: a reset seen once on energising |
 | Pi deployment: systemd units, UART, WiFi access point (`deploy/`) | Written; not yet tried on the Pi |
 | `photometry` + `analysis` + metrics, `pipeline/region.py`, `ugrctl` | **Built**, validated on synthetic brackets; needs real CR2s, the target and the meter |
-| `hal/camera.py` — gphoto2 against the 2000D; this is where the surprises live | **Built**, tested against a fake libgphoto2; not yet on the body |
-| Live view (camera preview), MJPEG stream | **Built**; simulated cab on the desk; gphoto2 preview tested against a fake libgphoto2 only, confirm on the body |
+| `hal/camera.py` — gphoto2 against the 2000D; this is where the surprises live | **Built**, tested against a fake libgphoto2; connects to the real 2000D from the Pi (2026-11-23), no bracket yet |
+| Live view (camera preview), MJPEG stream | **Built**; simulated cab on the desk; runs on the body (2026-11-25, overexposed); the shutter control added for that is tested against a fake libgphoto2 only, confirm on the body |
 | Jog, nudge, speed and controlled stop in `hal/mount.py`; `service/` + HTTP API; `rigctl` | **Built**, sim-tested; not yet on hardware |
 | Measure the built head (`docs/PIVOT_DETAIL.md` §8) | After assembly |
 | `storage` + session sequence + analysis worker (`service/study.py`, `pipeline/study.py`) | **Built**, sim-tested; optical zero, aim check and drift check (2026-11-22); calibration shot from an accepted calibration within 12 h |
@@ -157,8 +157,8 @@ positions cover (`REQUIREMENTS.md` §3.6).
 
 1. **Drivers on the bench** — `mountctl drivers` with the motor rail on must end in
    `verified` before the real head moves (`deploy/README.md` §5).
-2. **Camera on the bench** — `ugrctl camera info`, one bracket and live view on the real 2000D:
-   which config names it exposes, which are writable, whether the EXIF check passes, and whether
-   preview works over gphoto2.
+2. **Camera on the bench** — one bracket and live view on the real 2000D: whether the shutter is
+   writable, whether the EXIF check passes, and whether preview works over gphoto2.
+   (`ugrctl camera info` passed 2026-11-23.)
 3. **Lab access to a calibrated luminance meter** — decides ~€550–1100 of the calibration budget.
 4. **Lens constants** — focal length, distortion and vignetting of the 18–55 at 18 mm, f/8.

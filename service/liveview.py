@@ -133,9 +133,11 @@ class LiveView:
             else:
                 state = "idle"
             age = time.monotonic() - self._frame_at if self._frame is not None else None
+            exposure = getattr(self.camera, "live_exposure", None)
             return {"source": self.source, "state": state, "viewers": self._viewers,
                     "fps": round(self._fps, 1), "error": self._error,
-                    "frame_age_s": None if age is None else round(age, 2)}
+                    "frame_age_s": None if age is None else round(age, 2),
+                    "exposure": exposure() if exposure else None}
 
     def close(self) -> None:
         with self._cond:

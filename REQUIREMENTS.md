@@ -31,7 +31,7 @@ sessions matters more than any single absolute number.
 | Item | Choice | Notes |
 |---|---|---|
 | Controller | Raspberry Pi 4, 8 GB | Headless, onboard WiFi as AP, 128 GB microSD. Pi 4 specifically — pigpio has no Pi 5 support |
-| Camera | Canon EOS 2000D, EF-S 18–55 mm taped at 18 mm | USB tether, PTP via libgphoto2 (python-gphoto2, LGPL-3.0). CR2 raw; live view over the same link. APS-C, 6000 × 4000, 64 × 45° at 18 mm |
+| Camera | Canon EOS 2000D, EF-S 18–55 mm IS II, stabiliser off, taped at 18 mm | USB tether, PTP via libgphoto2 (python-gphoto2, LGPL-3.0). CR2 raw; live view over the same link. APS-C, 6000 × 4000, 64 × 45° at 18 mm |
 | Motion | 2-axis pan/tilt head, isaac879 CAD (MIT) | 2× NEMA 17 (QSH4218-35) + TMC2209, driven directly from Pi GPIO |
 | Motion interface | Step/dir: pigpio DMA waveforms, 5 GPIO. Driver config: UART, 2 GPIO | No microcontroller. UART carries settings only |
 | Zeroing | Optical, camera + fixed fiducial | ~0.05°; doubles as the end-of-session drift check |
@@ -286,6 +286,8 @@ the table empty and a single global factor.
 
 - CR2 only, no JPEG
 - Mode dial on M, lens switch on MF — both physical on the 2000D; the code checks, it cannot set
+- Lens STABILIZER switch off (IS II lens): a moving element can shift the image between the frames
+  of a bracket and between sessions. The code cannot see this switch
 - Highlight Tone Priority off (it changes the raw exposure and the ISO floor). Long-exposure noise
   reduction off (harmless to the data, doubles the time of the 1 s and 4 s frames)
 - Fixed white balance (metadata only — does not touch raw)
@@ -723,8 +725,8 @@ Status per step: `README.md`.
 Revised 2026-11-19. `photometry`, `analysis`, `hal/camera.py` and the `hal` mount are built and
 sim-tested.
 
-1. Camera on the bench: `ugrctl camera info`, one bracket, and live view over gphoto2. This is the
-   most likely source of unpleasant surprises
+1. Camera on the bench: `ugrctl camera info` (passed 2026-11-23), one bracket, and live view over
+   gphoto2. This is the most likely source of unpleasant surprises
 2. `hal/tmc2209.py` (built 2026-11-20 against a simulated bus): `mountctl drivers` on the bench,
    ideally with a logic analyser on the UART, then on the built head: gear ratio, settle time,
    backlash, repeatability, run/hold current
@@ -797,10 +799,12 @@ sim-tested.
 - Vibration and settle time — needs measuring on the actual head
 - Whether the illuminance sensor is added for L_b cross-check
 - Spectral correction factor table — which source types matter in practice
-- 2000D over gphoto2: libgphoto2 2.5.34 lists it with capture, config, trigger and preview. Still
-  to confirm on the body: config names, that `capturetarget`, `iso`, `aperture` are writable, how
-  `focusmode` reports the lens switch, the live view frame rate, and how preview hands over to
-  capture
+- 2000D over gphoto2: libgphoto2 2.5.34 lists it with capture, config, trigger and preview. On
+  the body (2026-11-23): config names as expected, `focusmode` follows the lens switch, a write of
+  `autopoweroff` was refused as busy. Still to confirm: that `capturetarget`, `iso`, `aperture` and
+  `shutterspeed` are writable (`shutterspeed` also during live view, whose exposure is now
+  controlled through it: `hal/live_exposure.py`, 2026-11-25), the live view frame rate, and how
+  preview hands over to capture
 - Small sources (ω < 0.0003 sr, e.g. single indicator LEDs) are outside CIE 117 and flagged; CIE
   146/147 small-source correction needs the distance to the source, which the camera does not have
   (see the distance-per-ROI proposal above)

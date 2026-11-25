@@ -9,7 +9,8 @@ What the code cannot do on a 2000D, and therefore checks instead:
   - the mode dial is physical: must be on M
   - AF/MF is the lens switch: must be on MF (AF hunting in a dark cab blocks
     the shutter, and refocusing between frames would move the image)
-Things to switch off on the body once, by hand (not exposed over PTP):
+Things to switch off on the body and lens once, by hand (not exposed over PTP):
+  - The lens STABILIZER switch (a moving element can shift the image between frames)
   - Highlight Tone Priority (lifts the minimum ISO and changes the raw exposure)
   - Long exposure noise reduction (doubles the time of the 1 s and 4 s frames;
     harmless to the data, but slow)
@@ -37,6 +38,7 @@ from .camera_config import (
     parse_aperture,
     parse_shutter,
 )
+from .live_exposure import LiveExposure
 
 log = logging.getLogger(__name__)
 
@@ -230,6 +232,8 @@ class Gphoto2Camera:
     }
     TARGET_CHOICES = {"ram": "Internal RAM", "card": "Memory card"}
     BUSY_RETRIES = 10
+    LIVE_REFUSALS = 3       # in a row; then live view keeps the exposure it has
+    LIVE_START_S = 2.5      # longest the first live-view frame waits for its exposure
     OPTIONAL_RETRIES = 2    # settings the rig works without: do not wait 3 s for a refusal
 
     def __init__(self, config: CameraConfig) -> None:
@@ -241,6 +245,8 @@ class Gphoto2Camera:
         self._choice_cache: dict[str, list[str]] = {}
         self._preview_on = False
         self._power_off_refused = False
+        self._live_exp = LiveExposure(config.live_view)
+        self._live_refusals = 0
 
     # -- connection ---------------------------------------------------------- #
 
@@ -256,6 +262,7 @@ class Gphoto2Camera:
             raise self._translate(exc, "connect") from exc
         self._cam = cam
         self._power_off_refused = False
+        self._live_refusals = 0
         self._names = self._resolve_names()
         self._check_body()
         self._apply_static_settings()
@@ -394,16 +401,17 @@ class Gphoto2Camera:
             return
         w.set_value(value)
         self._call(f"set {name}={value}", self._write, name, w, tries=tries)
-        self._drain_events(0.05)
+        # live view keeps reporting; do not let its events hold up the stream
+        self._drain_events(0.05, limit_s=0.5 if self._preview_on else 5.0)
         got = str(self._widget(key)[1].get_value())
         if got != value:
             raise CameraSetupError(f"{name}: wrote {value!r}, body reports {got!r}")
 
-    def _drain_events(self, settle_s: float = 0.1) -> list[tuple[int, Any]]:
+    def _drain_events(self, settle_s: float = 0.1, limit_s: float = 5.0) -> list[tuple[int, Any]]:
         """Canon queues events after every change; leaving them makes the next call busy."""
         gp, cam = self._gp, self._require()
         events = []
-        deadline = time.monotonic() + 5.0
+        deadline = time.monotonic() + limit_s
         while time.monotonic() < deadline:
             etype, data = self._call("events", cam.wait_for_event, int(settle_s * 1000))
             if etype == gp.GP_EVENT_TIMEOUT:
@@ -476,6 +484,8 @@ class Gphoto2Camera:
     def apply_config(self, config: CameraConfig) -> None:
         """Switch to another exposure setup (a camera profile's) and, if connected, set
         aperture, ISO and the rest on the body now rather than at the next connect."""
+        if config.live_view != self.config.live_view:
+            self._live_exp = LiveExposure(config.live_view)
         self.config = config
         self._choice_cache.clear()
         if self._cam is not None:
@@ -494,11 +504,57 @@ class Gphoto2Camera:
         until end_preview(). Live view warms the sensor, and the extra dark current shows
         in the long bracket frames, so the bracket leaves it first and the service keeps it
         off for a recording run.
+
+        The shutter follows the scene (hal/live_exposure.py). The first frame waits for it,
+        so a caller that wants a single frame does not get a white one; after that each call
+        makes at most one change.
         """
+        self._require()
+        first = not self._preview_on
+        if first and self._live_auto():
+            self._set_live_shutter(self._live_exp.start(self._choices("shutter")))
+        frame = self._preview_frame()
+        if first:
+            deadline = time.monotonic() + self.LIVE_START_S
+            while (self._live_auto() and not self._live_exp.settled
+                   and time.monotonic() < deadline):
+                frame = self._preview_frame()
+        return frame
+
+    def _preview_frame(self) -> bytes:
         cam = self._require()
         cf = self._call("live view", cam.capture_preview)
         self._preview_on = True
-        return bytes(memoryview(cf.get_data_and_size()))
+        frame = bytes(memoryview(cf.get_data_and_size()))
+        if self._live_auto():
+            self._set_live_shutter(self._live_exp.update(frame, self._choices("shutter")))
+        return frame
+
+    def _live_auto(self) -> bool:
+        return (self.config.live_view.auto_exposure and "shutter" in self._names
+                and self._live_refusals < self.LIVE_REFUSALS)
+
+    def _set_live_shutter(self, label: str | None) -> None:
+        """Best effort: a refusal costs the operator a badly exposed view, not the camera.
+        A lost link still raises."""
+        if label is None:
+            return
+        try:
+            self._set("shutter", label, tries=self.OPTIONAL_RETRIES)
+            self._live_refusals = 0
+        except (CameraDisconnected, CameraNotFound):
+            raise
+        except CameraError as exc:
+            self._live_refusals += 1
+            log.warning("live view shutter %s not set: %s%s", label, exc,
+                        "; exposure left alone" if not self._live_auto() else "")
+            return
+        self._live_exp.changed(label)
+
+    def live_exposure(self) -> dict[str, Any]:
+        """For the status: the shutter live view runs at, and whether it is at its limit."""
+        return {"shutter": self._live_exp.label, "auto": self._live_auto(),
+                "at_limit": self._live_exp.at_limit}
 
     def end_preview(self) -> None:
         """Leave live view. A no-op when it is not on, or the body has no switch for it."""
