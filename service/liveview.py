@@ -6,6 +6,13 @@ With nobody watching the grabber sleeps, and after `idle_stop_s` it takes the ca
 live view: on the 2000D live view holds the mirror up and warms the sensor, and the extra dark
 current shows in the long bracket frames.
 
+Two ways to watch. A stream (`subscribe()`, the MJPEG route) pushes every frame, and on a
+slow link the frames queue in the socket buffers: on the Pi's WiFi that grew to ~10 s behind
+the head. The pages pull instead (`next_frame()`): one frame per request, the next asked for
+only when the last has arrived, so at most one frame is ever on its way and the view is as
+old as one transfer. A pull holds a lease of `lease_s`, renewed by every request, that keeps
+the grabber running between requests.
+
 `paused()` takes the camera away from live view for a capture: the grabber stops, live view is
 ended, and the caller gets the camera to itself until the block exits.
 
@@ -27,15 +34,17 @@ log = logging.getLogger(__name__)
 
 class LiveView:
     def __init__(self, camera: Any | None, source: str = "none", max_fps: float = 10.0,
-                 idle_stop_s: float = 5.0, retry_s: float = 2.0) -> None:
+                 idle_stop_s: float = 5.0, retry_s: float = 2.0, lease_s: float = 3.0) -> None:
         self.camera = camera
         self.source = source if camera is not None else "none"
         self.max_fps = max_fps
         self.idle_stop_s = idle_stop_s
         self.retry_s = retry_s
+        self.lease_s = lease_s
         self._cond = threading.Condition()
         self._cam_lock = threading.Lock()     # held for every camera call
         self._viewers = 0
+        self._lease_until = 0.0                 # a page pulling frames counts until then
         self._paused = 0
         self._closing = False
         self._connected = False
@@ -64,6 +73,21 @@ class LiveView:
             if self._viewers == 0:
                 self._idle_since = time.monotonic()
             self._cond.notify_all()
+
+    def _watched(self) -> bool:
+        """Caller holds _cond."""
+        return self._viewers > 0 or time.monotonic() < self._lease_until
+
+    def next_frame(self, after: int, timeout: float) -> tuple[int, bytes | None, float | None]:
+        """For a pulling viewer: the first frame newer than `after` (the latest on timeout),
+        its sequence number and its age in seconds. Renews the lease."""
+        with self._cond:
+            self._lease_until = max(self._lease_until, time.monotonic() + self.lease_s)
+            self._cond.notify_all()
+        seq, frame = self.wait_frame(max(after, 0), timeout)   # seq 0: no frame yet
+        with self._cond:
+            age = time.monotonic() - self._frame_at if frame is not None else None
+        return seq, frame, age
 
     def latest(self) -> tuple[int, bytes | None]:
         with self._cond:
@@ -126,15 +150,17 @@ class LiveView:
                 state = "paused"
             elif self._error:
                 state = "error"
-            elif self._viewers and self._frame is not None:
+            elif self._watched() and self._frame is not None:
                 state = "running"
-            elif self._viewers:
+            elif self._watched():
                 state = "starting"
             else:
                 state = "idle"
             age = time.monotonic() - self._frame_at if self._frame is not None else None
             exposure = getattr(self.camera, "live_exposure", None)
-            return {"source": self.source, "state": state, "viewers": self._viewers,
+            leased = time.monotonic() < self._lease_until
+            return {"source": self.source, "state": state,
+                    "viewers": self._viewers + int(leased),
                     "fps": round(self._fps, 1), "error": self._error,
                     "frame_age_s": None if age is None else round(age, 2),
                     "exposure": exposure() if exposure else None}
@@ -159,14 +185,15 @@ class LiveView:
         last = 0.0
         while True:
             with self._cond:
-                while not self._closing and (self._paused or not self._viewers):
+                while not self._closing and (self._paused or not self._watched()):
+                    idle_since = max(self._idle_since, self._lease_until)
                     if (self._previewing and not self._paused
-                            and time.monotonic() - self._idle_since > self.idle_stop_s):
+                            and time.monotonic() - idle_since > self.idle_stop_s):
                         break  # leave live view below, outside the condition
                     self._cond.wait(0.5)
                 if self._closing:
                     return
-                idle = not self._viewers or bool(self._paused)
+                idle = not self._watched() or bool(self._paused)
             if idle:
                 with self._cam_lock:
                     self._end_preview()

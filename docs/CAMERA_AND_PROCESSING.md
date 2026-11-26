@@ -91,8 +91,15 @@ current shows in the 1 s and 4 s frames.
 The rig server owns the camera (`service/liveview.py`): one grabber thread serves every browser,
 at up to 10 fps, only while someone watches; 5 s after the last viewer leaves it ends live view on
 the body. Capture takes the camera through `LiveView.paused()`. Errors (dial off M, cable out,
-asleep) show on the page and are retried every 2 s. `/api/live.mjpg` is the stream,
-`/api/live.jpg` one frame.
+asleep) show on the page and are retried every 2 s.
+
+The pages pull frames one at a time (`/api/live/next?after=<seq>`, `liveFeed()` in
+`web/static/api.js`): the next frame is asked for only when the last has arrived, so a slow WiFi
+link lowers the frame rate instead of queueing frames. The MJPEG stream (`/api/live.mjpg`) the
+pages used before fell ~10 s behind the head on the rig's own WiFi (2026-11-26), once
+properly exposed frames made each JPEG several times larger; it is still served for other
+clients. The movement page shows the camera's rate and what reaches the screen ("here … fps,
+… s behind"): a lower rate there means the link is the limit. `/api/live.jpg` is one frame.
 
 **Exposure.** With the dial on M the body shows live view at the brightness of the set exposure,
 and nothing chose a shutter for it (4 s is left after every bracket). Live view was seen very

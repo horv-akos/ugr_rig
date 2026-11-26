@@ -9,7 +9,9 @@ The interactive docs pages (/docs, /redoc) are switched off: they load their scr
 CDN, and the Pi's own WiFi has no internet. `/openapi.json` still describes every route. The
 pages are plain HTML, CSS and JavaScript under `web/static/`, served as they are: no build step.
 
-Live view is `/api/live.mjpg`, an MJPEG stream any `<img>` can show; `/api/live.jpg` is one
+Live view: the pages pull `/api/live/next?after=<seq>`, one frame per request, so a slow WiFi
+link lowers the frame rate instead of piling frames up behind the head. `/api/live.mjpg` is
+an MJPEG stream any `<img>` can show (it queues on a slow link); `/api/live.jpg` is one
 fresh frame.
 
 Errors come back as `{"error": <type>, "detail": <message>}`:
@@ -254,6 +256,20 @@ def create_app(rig: RigController, shutdown_command: list[str] | None = None) ->
 
         return StreamingResponse(stream(), headers={"Cache-Control": "no-store"},
                                  media_type=f"multipart/x-mixed-replace; boundary={BOUNDARY}")
+
+    @app.get("/api/live/next")
+    def live_next(after: int = -1, timeout: float = 3.0) -> Response:
+        """The first frame newer than `after`, for pages that pull one frame at a time (see
+        service/liveview.py: a push stream queues up on a slow link). X-Frame-Seq goes back
+        as the next `after`; X-Frame-Age is how old the frame was when it left, in s."""
+        seq, frame, age = rig.live.next_frame(after, max(0.1, min(timeout, 10.0)))
+        if frame is None:
+            return JSONResponse(status_code=503, content={
+                "error": "NoFrame", "detail": rig.live.status()["error"] or
+                f"no live-view frame (camera: {rig.live.source})"})
+        return Response(frame, media_type="image/jpeg", headers={
+            "Cache-Control": "no-store", "X-Frame-Seq": str(seq),
+            "X-Frame-Age": f"{age or 0.0:.3f}"})
 
     @app.post("/api/mount/enable")
     def enable() -> dict[str, Any]:

@@ -410,7 +410,8 @@ clients of its HTTP API; `mountctl` stays as the bench and measurement tool.
   the request, LibRaw decode) before deleting from the card
 - Fail loudly and recoverably: a dropped USB link mid-session must not lose completed directions
 - **Live view** from the camera's own feed (gphoto2 preview, decided 2026-11-19), served to the
-  browser as an MJPEG stream. It pauses during every bracket and calibration shot, which share the
+  browser one frame per request (pulled, so a slow link drops frames rather than lagging;
+  the MJPEG stream used until 2026-11-26 fell ~10 s behind on the rig's WiFi). It pauses during every bracket and calibration shot, which share the
   USB link, and stays off for the whole recording run: it warms the sensor, and the extra dark
   current shows in the long frames. While it is paused the UI shows capture progress and the last
   frame instead. Built 2026-11-19 (`service/liveview.py`): one grabber thread for all viewers,
@@ -698,7 +699,7 @@ ugr_rig/
 │                         jobs for a study (sweep, regions) and its summary   (built)
 │                         optical.py: optical zero, drift, aim, lens tracking (built)
 │                         study.py process_forward: the forward-gaze job      (built)
-├── web/                  FastAPI over service/: HTTP API, MJPEG live view, movement and home
+├── web/                  FastAPI over service/: HTTP API, live view, movement and home
 │                         pages (static/: plain HTML/CSS/JS, no build step)   (built)
 │                         camera calibration page                             (built)
 └── tools/                mountctl, ugrctl: bench CLIs; rigctl: client of the service API (built)

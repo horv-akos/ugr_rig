@@ -4,7 +4,7 @@
 // and the server ramps the jog down when the pings stop (released, tab hidden, WiFi gone).
 // Status is polled at 4 Hz, which doubles as the connection check.
 
-import { api, deg, el, remember, seg } from "./api.js";
+import { api, deg, el, liveFeed, remember, seg } from "./api.js";
 import { drawMasks, openMaskEditor, wireMaskEditor } from "./masks.js";
 
 const $ = (id) => document.getElementById(id);
@@ -228,7 +228,7 @@ function showSpeed() {
 
 // ---------------------------------------------------------------- live view
 
-let liveRetry = null;
+let feed = null;   // liveFeed() while live view is shown
 
 function liveWanted() {
   return $("opt-live").checked && st && st.live_view.source !== "none";
@@ -237,19 +237,26 @@ function liveWanted() {
 function renderLive() {
   const img = $("live"), lv = st.live_view;
   const want = liveWanted();
-  if (want && !img.getAttribute("src") && !liveRetry) img.src = `/api/live.mjpg?t=${Date.now()}`;
-  if (!want && img.getAttribute("src")) img.removeAttribute("src");
+  if (want && !feed) feed = liveFeed(img);
+  if (!want && feed) { feed.stop(); feed = null; }
 
   let msg = "";
   if (lv.source === "none") msg = "No camera: the server was started with --camera none.";
   else if (!$("opt-live").checked) msg = "Live view off.";
   else if (lv.state === "error") msg = `Camera: ${lv.error}`;
   else if (lv.state === "paused") msg = "Live view paused while the camera captures.";
+  else if (feed && feed.error && !img.naturalWidth) msg = `Live view: ${feed.error}`;
   else if (lv.state === "starting" || !img.naturalWidth) msg = "Starting live view…";
   $("live-msg").textContent = msg;
   $("live-info").textContent = lv.state === "running"
-    ? `${lv.source === "sim" ? "simulated" : "camera"} · ${lv.fps} fps${exposureText(lv.exposure)}`
+    ? `${lv.source === "sim" ? "simulated" : "camera"} · ${lv.fps} fps${linkText()}${exposureText(lv.exposure)}`
     : lv.state;
+}
+
+// What reaches this screen: below the camera's rate, the WiFi is the limit.
+function linkText() {
+  if (!feed || feed.lag_s === null) return "";
+  return ` · here ${feed.fps.toFixed(1)} fps, ${feed.lag_s.toFixed(1)} s behind`;
 }
 
 // The shutter the camera runs live view at. No effect on a measurement.
@@ -258,13 +265,6 @@ function exposureText(e) {
   const note = !e.auto ? ", exposure not controlled"
     : e.at_limit ? `, still too ${e.at_limit}` : "";
   return ` · ${e.shutter}${e.shutter.includes("/") ? "" : " s"}${note}`;
-}
-
-function liveError() {
-  const img = $("live");
-  img.removeAttribute("src");
-  clearTimeout(liveRetry);
-  liveRetry = setTimeout(() => { liveRetry = null; }, 2000);   // render() reconnects after this
 }
 
 // ---------------------------------------------------------------- overlay
@@ -669,7 +669,6 @@ function wire() {
 
   $("opt-live").addEventListener("change", () => st && render());
   $("opt-outlines").addEventListener("change", drawOverlay);
-  $("live").addEventListener("error", liveError);
   $("live").addEventListener("load", drawOverlay);
 
   // Keyboard: arrows move (held = jog in hold mode), space / Escape stop, H toggles mode.

@@ -103,6 +103,29 @@ def test_frames_only_while_watched():
         lv.close()
 
 
+def test_pulled_frames_hold_a_lease():
+    """A page pulling frames is a viewer between its requests, and stops being one when it
+    stops asking: the grabber keeps going for `lease_s`, then leaves live view."""
+    cam = FlakyCamera()
+    lv = LiveView(cam, "test", max_fps=50, idle_stop_s=0.1, lease_s=0.3)
+    try:
+        seq, frame, age = lv.next_frame(-1, timeout=2.0)
+        assert frame.startswith(b"\xff\xd8") and seq >= 1 and 0 <= age < 1.0
+        assert lv.status()["state"] == "running" and lv.status()["viewers"] == 1
+        seq2, frame2, _ = lv.next_frame(seq, timeout=2.0)
+        assert seq2 > seq and frame2 != frame                  # the next one, not the same
+        n = cam.n
+        time.sleep(0.15)
+        assert cam.n > n                                       # still grabbing between pulls
+        assert wait_for(lambda: "end_preview" in cam.calls)    # lease over: live view left
+        assert lv.status()["state"] == "idle" and lv.status()["viewers"] == 0
+        n = cam.n
+        time.sleep(0.15)
+        assert cam.n == n
+    finally:
+        lv.close()
+
+
 def test_paused_hands_over_the_camera():
     cam = FlakyCamera()
     lv = LiveView(cam, "test", max_fps=50)

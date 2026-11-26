@@ -162,6 +162,11 @@ def test_pages_and_live_view(tmp_path):
         mj = c.get("/api/live.mjpg?frames=2")
         assert mj.headers["content-type"].startswith("multipart/x-mixed-replace")
         assert mj.content.count(b"--frame\r\n") == 2
+        nx = c.get("/api/live/next?after=-1")      # what the pages use
+        assert nx.headers["content-type"] == "image/jpeg" and nx.content[:2] == b"\xff\xd8"
+        seq = int(nx.headers["x-frame-seq"])
+        assert float(nx.headers["x-frame-age"]) >= 0
+        assert int(c.get(f"/api/live/next?after={seq}").headers["x-frame-seq"]) > seq
         st = c.get("/api/status").json()
         assert st["live_view"]["source"] == "sim" and "axes" in st
     finally:

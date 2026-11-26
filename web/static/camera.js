@@ -4,7 +4,7 @@
 // stored value and the target's uniformity, then accepts it into the profile. A study within
 // 12 h of an accepted calibration of its profile counts it as its calibration shot.
 
-import { api, el, remember, seg } from "./api.js";
+import { api, el, liveFeed, remember, seg } from "./api.js";
 
 const $ = (id) => document.getElementById(id);
 let st = null;
@@ -53,9 +53,11 @@ async function poll() {
   setTimeout(poll, 500);
 }
 
+let feed = null;   // liveFeed(): pulled one frame at a time, see api.js
+
 function renderLive() {
   const img = $("live"), lv = st.live_view;
-  if (lv.source !== "none" && !img.getAttribute("src")) img.src = `/api/live.mjpg?t=${Date.now()}`;
+  if (lv.source !== "none" && !feed) feed = liveFeed(img);
   $("live-msg").textContent = lv.source === "none" ? "No camera."
     : lv.state === "error" ? `Camera: ${lv.error}`
       : lv.state === "paused" ? "Live view paused while the camera shoots." : "";

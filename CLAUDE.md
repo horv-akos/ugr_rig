@@ -155,6 +155,9 @@ talks to hardware, so it is always testable on a desk against stored brackets.
   never in the server process. Steps not built yet are recorded `skipped` and flagged.
 - The simulated camera shoots small brackets of `CabView`; `processing_setup()` passes the
   pixel pitch that keeps the 2000D field of view, as a config override in the provenance.
+- Pages pull live view one frame per request (`liveFeed()` in `api.js`, `/api/live/next`),
+  never the MJPEG stream: pushed frames queue in the socket buffers and lagged ~10 s on the
+  rig's WiFi, starving the jog pings too.
 - `/static` is served `Cache-Control: no-cache`, so after an update no phone runs old page
   code against the new API. Reference images come from `LiveView.snapshot()`, which drops the
   frame in progress (it may predate the end of the move).
