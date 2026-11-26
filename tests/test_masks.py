@@ -193,3 +193,60 @@ def test_reflection_roi_inherits_its_luminaire(tmp_path):
 def _write(path, obj):
     path.write_text(json.dumps(obj))
     return path
+
+
+def _growth_scene():
+    import numpy as np
+
+    L = np.full((200, 300), 20.0, np.float32)
+    L[40:80, 40:120] = 450.0                 # panel straddling the threshold...
+    L[40:42, 60:70] = 560.0                  # ...with a few pixels over it
+    L[117:143, 197:223] = 600.0              # a lamp's lit surround / lens glow, over 500
+    L[120:140, 200:220] = 3000.0             # the lamp
+    L[10:30, 200:240] = 450.0                # a panel wholly under the threshold
+    L[150, 20] = 5000.0                      # hot pixel
+    return L
+
+
+def test_blobs_grow_to_the_whole_luminaire():
+    import numpy as np
+
+    from photometry.masks import CameraGeometry
+
+    L = _growth_scene()
+    geom = CameraGeometry.for_frame(300, 200, 22.32, 18.0, 0.0)
+    srcs, labels, info = detection.detect_sources(L, np.zeros(L.shape, bool), geom,
+                                                  detection.RegionMasks(), 500.0, 4, 3,
+                                                  lambda t: 1.0)
+    lamp, panel = srcs                       # brightest first; the dim panel and the hot
+    assert lamp.n_px == 400 and lamp.L_cd_m2 == pytest.approx(3000.0)   # pixel do not count
+    assert not lamp.flags                    # its 600 cd/m2 surround stays out (< 2/3 L)
+    assert panel.n_px == 3200 and panel.n_seed_px == 20
+    assert panel.L_cd_m2 == pytest.approx(451.0, abs=1.0)   # solid-angle weighted
+    assert any(f.startswith("grown from 20 px") for f in panel.flags)
+    assert info["dropped_small_blobs"] == 1 and info["source_fraction"] == pytest.approx(2 / 3)
+    assert labels[60, 80] == 2 and labels[20, 220] == 0 and labels[118, 198] == 0
+    # 1.0 / 0.0: the plain threshold blobs, surround and all
+    old, _, _ = detection.detect_sources(L, np.zeros(L.shape, bool), geom,
+                                         detection.RegionMasks(), 500.0, 4, 3, lambda t: 1.0,
+                                         extent_fraction=1.0, source_fraction=0.0)
+    assert [s.n_px for s in old] == [26 * 26, 20]
+    with pytest.raises(ValueError):
+        detection.detect_sources(L, np.zeros(L.shape, bool), geom, detection.RegionMasks(),
+                                 500.0, 4, 3, lambda t: 1.0, extent_fraction=0.0)
+
+
+def test_growth_stops_at_masks():
+    import numpy as np
+
+    from photometry.masks import CameraGeometry
+
+    L = _growth_scene()
+    geom = CameraGeometry.for_frame(300, 200, 22.32, 18.0, 0.0)
+    # exclude the right half of the panel (columns 80..119 of 300)
+    masks = detection.RegionMasks(exclude=[[(80 / 300, 0.0), (1.0, 0.0), (1.0, 0.5),
+                                            (80 / 300, 0.5)]])
+    srcs, _, _ = detection.detect_sources(L, np.zeros(L.shape, bool), geom, masks, 500.0, 4, 3,
+                                          lambda t: 1.0)
+    panel = [s for s in srcs if s.n_seed_px == 20][0]
+    assert panel.bbox_px[2] < 80

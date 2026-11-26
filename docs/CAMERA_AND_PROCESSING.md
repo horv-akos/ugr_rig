@@ -183,10 +183,21 @@ Position index: Guth via Levin's fit at and above the line of sight, Iwata below
 1. Exclusion polygons (windows) — never sources
 2. Inclusion ROIs — pixels inside at ≥ threshold form one named source; the ROI area is closed to
    blob detection
-3. Everything else ≥ 500 cd/m²: blobs, merged within `merge_radius_px`, dropped below `min_pixels`
+3. Everything else ≥ 500 cd/m² seeds a source: seeds merged within `merge_radius_px`, then grown
+   to the whole luminaire. The source is every pixel connected to the seed (8 neighbours) at or
+   above the higher of `extent_fraction` × threshold (250 cd/m², fixed so sessions compare) and
+   `source_fraction` × the seed's own ω-weighted luminance (2/3: a bright lamp keeps its lit
+   surroundings and the lens's glow out of its mean, which would otherwise dilute it). Seed
+   pixels under that level are left out. Growth stops at exclusions, ROIs and glazing (and a
+   reflection's at the edge of the glazing). Dropped below `min_pixels` after growing. A panel
+   that straddles the threshold now counts whole; one wholly under it still does not.
+   `extent_fraction = 1`, `source_fraction = 0` gives the plain threshold blobs of results
+   before 2026-11-26.
 
-Per source: ω-weighted mean L, ω, centre direction, p, contribution `L²ω/p²`. Flags: clipped
-(lower bound), ω outside 0.0003–0.1 sr, p capped.
+Per source: ω-weighted mean L, ω, centre direction, p, contribution `L²ω/p²`, `n_seed_px`. Flags:
+clipped (lower bound), ω outside 0.0003–0.1 sr, p capped, grown to more than
+`extent_flag_ratio` (10, MEASURE) times its seed pixels (mostly under the threshold: check it is
+one luminaire; an inclusion or exclusion area settles it).
 
 Masks file, one per vehicle and direction, coordinates normalised 0..1 from the top left. The
 mask editor on the movement page writes one per saved position
@@ -233,6 +244,11 @@ python -m tools.ugrctl process brackets/dash --lb-json session_lb.json --masks m
 CIE 117: `UGR = 8 log₁₀(0.25 / L_b · Σ L²ω/p²)`, with the perception scale (10 imperceptible …
 28 uncomfortable). By default each region is rated as if the observer looks along the camera axis
 (`line_of_sight = "camera"`); `[pan, tilt]` fixes the gaze and positions sources relative to it.
+The formula has no floor: small or dim sources give values under 10, even negative. They are
+kept (so results still order) and flagged as under the scale, per position and for the forward
+gaze. In the first full test (2026-11-26) ceiling panels at 300–600 cd/m² straddled the
+500 cd/m² threshold, so only slivers of them counted, and every UGR came out negative; the
+threshold sensitivity in each result shows this (UGR 4–9 at 250 cd/m²).
 
 ---
 

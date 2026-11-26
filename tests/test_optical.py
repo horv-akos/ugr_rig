@@ -37,7 +37,7 @@ def test_spot_refusals():
         find_spot(gaussian(80, 60, peak=10), (80, 60), 20, 12, 40)
     with pytest.raises(SpotNotFound, match="not a small spot"):
         find_spot(gaussian(80, 60, sigma=8), (80, 60), 40, 12, 40)
-    with pytest.raises(SpotNotFound, match="edge"):
+    with pytest.raises(SpotNotFound, match=r"edge.*peak is at \(95, 60\), 15 px out of 16"):
         find_spot(gaussian(95, 60), (80, 60), 16, 12, 40)        # cut by the window
 
 

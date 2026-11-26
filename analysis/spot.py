@@ -94,8 +94,11 @@ def find_spot(img: np.ndarray, centre: tuple[float, float], radius_px: float,
                            f"across, more than {max_extent_px:.0f}: not a small spot")
     edge = (np.hypot(uu[blob] - cu, vv[blob] - cv) > radius_px - 1.5).any()
     if edge:
+        pu, pv = u0 + iu, v0 + iv
         raise SpotNotFound(f"the brightest blob near ({cu:.0f}, {cv:.0f}) runs into the edge "
-                           "of the search window")
+                           f"of the search window: its peak is at ({pu}, {pv}), "
+                           f"{np.hypot(pu - cu, pv - cv):.0f} px out of {radius_px:.0f}. "
+                           "Aim closer to it, or widen [optical] search_deg")
     # The centroid takes the blob's edges too (grown by 2 px): cut at half height, a spot
     # between pixel centres loses more of one edge than the other.
     near = ndimage.binary_dilation(blob, iterations=2) & inside

@@ -35,7 +35,9 @@ support the Pi 5.
 3. **Linearise** — raw → black level → 2×2 Bayer superpixels (3000 × 2000, no demosaic), channels
    mixed toward V(λ) with the camera's own colour matrix.
 4. **Merge** — Debevec-weighted HDR merge on the linear data, then `L = k·DN·N²/(t·ISO)` → cd/m².
-5. **Detect** — per-position inclusion ROIs first, then an absolute 500 cd/m² threshold. Glazing
+5. **Detect** — per-position inclusion ROIs first, then an absolute 500 cd/m² threshold that
+   seeds each source, grown to the whole luminaire (down to 250 cd/m², and not below 2/3 of
+   the source's own luminance). Glazing
    is marked by mask: daylight through it never counts, reflections of the cab's lights in it do
    (in dark studies, against a lower threshold).
 6. **Background** — one coarse hemisphere sweep per session gives `E_ind`, and `L_b = E_ind/π`.
@@ -121,6 +123,7 @@ where to point the laptop's browser. Bound to 127.0.0.1 over SSH it says how to 
 | Measure the built head (`docs/PIVOT_DETAIL.md` §8) | After assembly |
 | `storage` + session sequence + analysis worker (`service/study.py`, `pipeline/study.py`) | **Built**, sim-tested; optical zero, aim check and drift check (2026-11-22); calibration shot from an accepted calibration within 12 h |
 | Reflections in detection, forward-gaze combination, coverage and tiling | **Built**, sim-tested (2026-11-22); reflection threshold and coverage target are starting values |
+| Sources grown from the threshold to the whole luminaire; UGR under 10 flagged | **Built**, sim-tested (2026-11-26, after the first full test counted only slivers of the ceiling panels); not yet re-run on real brackets |
 | `report`: photo, contribution map, source map, masks, UGR stamp, Excel, PDF; re-analysis | **Built**, sim-tested; CR2 photo untested |
 | Home: raw zip, comparison view, shutdown button; profile copy; `rigctl study` commands | **Built**, sim-tested (2026-11-22); shutdown untried on the Pi |
 | `web`: movement calibration page, reference images, mask editor, zero on the fiducial, zero check, coverage map and tiling proposal | **Built**, sim-tested |

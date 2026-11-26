@@ -37,6 +37,16 @@ def category(ugr: float | None) -> str:
     return "intolerable"
 
 
+def below_scale(ugr: float | None) -> str | None:
+    """A flag for a UGR under the CIE 117 scale (10 to 30). The formula has no floor: tiny
+    or dim sources give any value down to large negatives. Kept, not clipped, so values still
+    order, but nothing below 10 is a measured degree of discomfort."""
+    if ugr is None or ugr >= SCALE[0][0]:
+        return None
+    return (f"UGR {ugr:.1f} is under the CIE 117 scale (10 to 30): no discomfort glare. "
+            "The value is kept so results still order, but it is not a degree of discomfort")
+
+
 def rate_sources(sources, cam_to_view: np.ndarray, omega_min: float, omega_max: float,
                  p_cap: float) -> None:
     """Fill sigma, tau, p and contribution on each Source in place."""

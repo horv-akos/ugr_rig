@@ -136,6 +136,9 @@ talks to hardware, so it is always testable on a desk against stored brackets.
   count, against their own threshold (`detection.lighting`, set from the study); in `daylight`
   studies glazing is excluded. The reflection threshold and merge radius are MEASURE: equal to
   the direct ones until the first dark cab session, and flagged while they are.
+- The detection threshold only **seeds** a blob source; it grows over connected pixels down to
+  max(threshold × `extent_fraction`, own L × `source_fraction`) (0.5, 2/3). ROIs never grow.
+  1.0 / 0.0 reproduces results from before 2026-11-26.
 - Masks belong to a position (`<data>/profiles/positions/<slug>/<id>.masks.json`), drawn on its
   reference image `<id>.jpg`; the file is the `--masks` input of `ugrctl process`. Position ids
   are stable, so re-saving a position keeps its masks. Names may not contain `/` or `\`.

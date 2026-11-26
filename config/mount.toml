@@ -43,8 +43,8 @@ run_current_a = 0.6             # MEASURE (PIVOT_DETAIL §8.6): RMS; QSH4218-35-
 hold_current_a = 0.3            # MEASURE: applied during the bracket; too low and tilt creeps
 min_deg = -170.0                # MEASURE: drive to interference by hand, back off
 max_deg = 170.0                 # MEASURE
-max_speed_deg_s = 5.0
-accel_deg_s2 = 5.0              # 1 s ramp to max speed
+max_speed_deg_s = 15.0         # 1130 microsteps/s, motor ~21 rpm: far below where torque falls
+accel_deg_s2 = 15.0             # 1 s ramp to max speed; a released jog coasts ~7.5 deg
 start_speed_deg_s = 0.25
 backlash_deg = 0.5              # MEASURE: overshoot margin when reversing
 approach_sign = 1               # always arrive at a target moving positive
@@ -61,8 +61,8 @@ run_current_a = 0.6             # MEASURE (PIVOT_DETAIL §8.6)
 hold_current_a = 0.3            # MEASURE: the tilt axis carries the camera; check it does not creep
 min_deg = -45.0                 # MEASURE
 max_deg = 60.0                  # MEASURE
-max_speed_deg_s = 5.0
-accel_deg_s2 = 5.0
+max_speed_deg_s = 15.0         # 410 microsteps/s, motor ~8 rpm
+accel_deg_s2 = 15.0
 start_speed_deg_s = 0.25
 backlash_deg = 0.5              # MEASURE
 approach_sign = 1
@@ -70,7 +70,9 @@ approach_sign = 1
 [optical]
 # Optical zero, drift check, aim check and lens tracking (pipeline/optical.py,
 # docs/PIVOT_DETAIL.md §5). Measured on live-view frames.
-search_deg = 3.0                # the fiducial must lie within this of where the zero expects it
+search_deg = 10.0               # the fiducial must lie within this of where the zero expects it.
+                                # 3 was too tight to aim at by eye (first full test, 2026-11-26).
+                                # Wider risks another bright thing being the brightest
 max_spot_deg = 3.0              # anything larger is not the fiducial
 min_contrast = 40.0             # live-view grey levels above the surroundings
 frames = 3                      # frames per measurement, after one discarded

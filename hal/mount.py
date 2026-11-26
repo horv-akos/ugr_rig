@@ -38,7 +38,7 @@ log = logging.getLogger(__name__)
 MAX_WAVES_IN_FLIGHT = 3
 POLL_S = 0.005
 # Longest wave. With three in flight a stop starts ramping within ~0.3 s. At the
-# head's speeds (a few hundred microsteps/s) a late wave costs a pause, not a
+# head's speeds (at most ~1100 microsteps/s, 70 full steps/s) a late wave costs a pause, not a
 # lost step, so short waves are safe.
 CHUNK_US = 100_000
 

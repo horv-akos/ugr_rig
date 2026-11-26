@@ -36,6 +36,7 @@ import threading
 import time
 from typing import TYPE_CHECKING, Any
 
+from analysis.ugr import below_scale
 from pipeline import study as worker
 
 from .positions import PositionProfile, now_iso, slug
@@ -601,6 +602,8 @@ class StudyRun:
             self.flag(f"forward gaze: the positions cover {100 * res['coverage']:.0f} % of the "
                       f"glare-weighted forward field, under {100 * res['coverage_min']:.0f} %: "
                       "the forward-gaze UGR is a lower bound")
+        if (f := below_scale(res.get("ugr"))) is not None:
+            self.flag(f"forward gaze: {f}")
         for s in res["sources"]:
             for f in s["flags"]:
                 if f.startswith(("cut by the frame edge in every view", "seen from")):

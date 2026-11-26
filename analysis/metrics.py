@@ -67,15 +67,18 @@ def threshold_sensitivity(L: np.ndarray, clipped: np.ndarray, geom: CameraGeomet
                           min_pixels: int, merge_radius_px: int, spectral, cam_to_view,
                           ugr_cfg, L_b: float, lighting: str = "dark",
                           reflection_threshold: float | None = None,
-                          reflection_merge_radius_px: int | None = None
+                          reflection_merge_radius_px: int | None = None,
+                          growth: dict[str, float] | None = None
                           ) -> list[dict[str, Any]]:
-    """The UGR at each threshold, with the same masks, L_b and line of sight."""
+    """The UGR at each threshold, with the same masks, L_b, line of sight and growth (each
+    threshold seeds its own growth)."""
     out = []
     for thr in thresholds:
         # The direct threshold varies; reflections keep theirs.
         srcs, _, _ = detection.detect_sources(L, clipped, geom, masks, thr, min_pixels,
                                               merge_radius_px, spectral, lighting,
-                                              reflection_threshold, reflection_merge_radius_px)
+                                              reflection_threshold, reflection_merge_radius_px,
+                                              **(growth or {}))
         ugr_mod.rate_sources(srcs, cam_to_view, ugr_cfg.omega_min_sr, ugr_cfg.omega_max_sr,
                              ugr_cfg.position_index_cap)
         out.append({"threshold_cd_m2": thr, "ugr": ugr_mod.ugr(srcs, L_b),

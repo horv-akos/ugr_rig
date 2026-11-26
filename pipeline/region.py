@@ -136,7 +136,7 @@ def evaluate_region(bracket_dir: str | Path, out_dir: str | Path, cfg: AnalysisC
     sources, labels, det_info = detection.detect_sources(
         L, merged.hdr.clipped, geom, masks, dc.threshold_cd_m2, dc.min_pixels,
         dc.merge_radius_px, cfg.calibration.factor, dc.lighting, dc.reflection_threshold_cd_m2,
-        dc.reflection_merge_radius_px)
+        dc.reflection_merge_radius_px, **dc.growth())
     exclude = detection.exclusion_mask(masks, L.shape, dc.lighting)
 
     if lb is None:
@@ -155,7 +155,8 @@ def evaluate_region(bracket_dir: str | Path, out_dir: str | Path, cfg: AnalysisC
     pos_metrics["threshold_sensitivity"] = metrics.threshold_sensitivity(
         L, merged.hdr.clipped, geom, masks, cfg.detection.sensitivity_cd_m2,
         cfg.detection.min_pixels, cfg.detection.merge_radius_px, cfg.calibration.factor, R,
-        cfg.ugr, L_b, dc.lighting, dc.reflection_threshold_cd_m2, dc.reflection_merge_radius_px)
+        cfg.ugr, L_b, dc.lighting, dc.reflection_threshold_cd_m2, dc.reflection_merge_radius_px,
+        growth=dc.growth())
 
     flags = []
     if lb_info.get("provisional"):
@@ -179,6 +180,8 @@ def evaluate_region(bracket_dir: str | Path, out_dir: str | Path, cfg: AnalysisC
     if not masks.glazing and dc.lighting == "dark":
         flags.append("no glazing drawn for this position: reflections are rated as direct "
                      "sources, if bright enough")
+    if (f := ugr_mod.below_scale(value)) is not None:
+        flags.append(f)
     if any(s.flags for s in sources):
         flags.append("some sources carry flags - see the source table")
 

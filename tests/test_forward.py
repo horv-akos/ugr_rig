@@ -192,3 +192,12 @@ def test_static_files_are_revalidated(tmp_path):
         assert r.status_code == 200 and r.headers["cache-control"] == "no-cache"
     finally:
         rig.close()
+
+
+def test_ugr_under_the_scale_is_flagged_not_clipped():
+    from analysis.ugr import below_scale, category
+
+    assert below_scale(None) is None and below_scale(10.0) is None and below_scale(19.0) is None
+    f = below_scale(-13.37)
+    assert f is not None and "-13.4" in f and "10 to 30" in f
+    assert category(-13.37) == "imperceptible"

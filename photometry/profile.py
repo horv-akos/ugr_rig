@@ -62,6 +62,15 @@ class DetectionConfig:
     lighting: str = "dark"                     # the study's: glazing searched (dark) or excluded
     reflection_threshold_cd_m2: float = 500.0
     reflection_merge_radius_px: int = 3
+    extent_fraction: float = 0.5               # blobs grow down to this x their threshold
+    source_fraction: float = 2 / 3             # ...but not below this x their own luminance
+    extent_flag_ratio: float = 10.0            # grown past this x the seed: flagged. MEASURE
+
+    def growth(self) -> dict[str, float]:
+        """The keyword arguments of detection.detect_sources that grow blobs."""
+        return {"extent_fraction": self.extent_fraction,
+                "source_fraction": self.source_fraction,
+                "extent_flag_ratio": self.extent_flag_ratio}
 
 
 @dataclass(frozen=True)
@@ -178,6 +187,9 @@ def load_analysis_config(path: str | Path | None = None) -> AnalysisConfig:
                                                    d.get("threshold_cd_m2", 500.0))),
             reflection_merge_radius_px=int(d.get("reflection_merge_radius_px",
                                                  d.get("merge_radius_px", 3))),
+            extent_fraction=float(d.get("extent_fraction", 0.5)),
+            source_fraction=float(d.get("source_fraction", 2 / 3)),
+            extent_flag_ratio=float(d.get("extent_flag_ratio", 10.0)),
         ),
         background=BackgroundConfig(
             method=method,

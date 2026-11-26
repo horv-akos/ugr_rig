@@ -129,8 +129,10 @@ pigpio does not support the Pi 5. This locks the project to the Pi 4.
 
 Each axis gets a trapezoidal profile: linear ramp in step frequency, cruise, symmetric ramp
 down. The quicker axis is stretched in time so both start and finish together. Stretching only
-lowers speed and acceleration. Working speed ~5 °/s with 1 s ramps — the rig is settle-time-bound,
-not throughput-bound.
+lowers speed and acceleration. Working speed 15 °/s with 1 s ramps (raised from 5 °/s after the
+first full test, 2026-11-26: moves of ~30° took 7 s). Pan then steps at ~1 130 microsteps/s (motor
+~21 rpm), tilt at ~410 (~8 rpm), far below where a NEMA 17's torque falls off. A released jog
+coasts ~7.5° on its ramp; the speed slider shortens that.
 
 The merged two-axis pulse stream is cut into waves under the pulse cap and sent back to back with
 `WAVE_MODE_ONE_SHOT_SYNC`, so there is no seam between waves. At most three waves exist at once,
@@ -138,7 +140,7 @@ so memory is constant in move length. `wave_chain()` loop blocks are **not** use
 fixed pattern and don't fit two axes at unequal step rates. Waves are also capped at 100 ms, so a
 controlled stop (hold-to-move release, stop button) starts ramping down within ~0.3 s: the
 timeline is generated lazily and, on a stop, each axis ramps down from its current rate. Full
-travel of both axes is ~28 400 steps, ~700 waves, 69 s.
+travel of both axes is ~28 400 steps, ~240 waves, 24 s (`mountctl info`).
 
 ### 4.4 Driver configuration over UART
 
@@ -183,7 +185,7 @@ reference, and a repeatable eye-point placement.
    the rest of the session.
 3. Aim the crosshair near it and press **Zero on fiducial** (Movement page). The service takes
    the backlash up, grabs live-view frames (one thrown away, then `frames` of them), and
-   `pipeline/optical.py` finds the brightest compact blob within `search_deg` of the crosshair
+   `pipeline/optical.py` finds the brightest compact blob within `search_deg` (10°) of the crosshair
    (`analysis/spot.py`), centroids it, turns the pixel into a direction through the camera
    profile's lens, and sets the datum so the fiducial is (0, 0). The head then goes to (0, 0)
    and measures again: that residual is shown.

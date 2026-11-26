@@ -34,7 +34,7 @@ DEFAULT_MOUNT_CONFIG = Path(__file__).resolve().parent.parent / "config" / "moun
 
 @dataclass(frozen=True)
 class OpticalConfig:
-    search_deg: float = 3.0         # the fiducial must be within this of where it is expected
+    search_deg: float = 10.0        # the fiducial must be within this of where it is expected
     max_spot_deg: float = 3.0       # larger than this is not the fiducial
     min_contrast: float = 40.0      # grey levels above the window's median
     frames: int = 3                 # frames per measurement, after one discarded

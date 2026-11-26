@@ -46,6 +46,15 @@ luminance_weights = "matrix"    # "matrix": Y row of the camera's colour matrix 
 threshold_cd_m2 = 500.0         # absolute, recorded with every result
 min_pixels = 4                  # smaller blobs are hot pixels or noise
 merge_radius_px = 3             # blobs closer than this are one luminaire (LED arrays)
+# A blob is seeded at the threshold and grows to the whole luminaire (decided 2026-11-26,
+# after ceiling panels at 300-600 cd/m2 counted only as slivers): every pixel connected to the
+# seed (8 neighbours) at or above the higher of
+extent_fraction = 0.5           # ...this x the threshold (fixed, so sessions compare), and
+source_fraction = 0.6667        # ...this x the seed's own luminance (keeps a bright lamp's lit
+                                # surroundings and lens glow out of its mean). 1.0 and 0.0
+                                # give the plain threshold blobs of results before 2026-11-26
+extent_flag_ratio = 10.0        # MEASURE: grown to more than this x its seed pixels = flagged
+                                # (mostly under the threshold: one luminaire?). 0 = never
 sensitivity_cd_m2 = [250.0, 500.0, 1000.0, 2000.0]   # UGR is also reported at these thresholds,
                                 # to show how much the number hangs on the threshold choice
 lighting = "dark"               # studies set their own; this is for ugrctl. dark: glazing is

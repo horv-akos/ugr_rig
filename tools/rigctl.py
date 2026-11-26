@@ -641,9 +641,12 @@ def cmd_selftest(args) -> int:
               and abs(r["tilt_deg"] + 5) < cfg.tilt.deg_per_step,
               f"{r['pan_deg']:+.4f}, {r['tilt_deg']:+.4f}")
         check("tilt arrived from below (two-stage)", r["backlash_stage"])
-        full = r["motion_s"]
+        # The same pan-only move twice, long enough that cruise outweighs ramps and settle.
         c.post("/api/mount/goto", {"pan": 0, "tilt": -5, "wait": True})
-        r = c.post("/api/mount/goto", {"pan": 10, "tilt": -5, "speed": 0.5,
+        full = c.post("/api/mount/goto", {"pan": 40, "tilt": -5,
+                                          "wait": True})["motion"]["result"]["motion_s"]
+        c.post("/api/mount/goto", {"pan": 0, "tilt": -5, "wait": True})
+        r = c.post("/api/mount/goto", {"pan": 40, "tilt": -5, "speed": 0.5,
                                        "wait": True})["motion"]["result"]
         check("half speed is slower", r["motion_s"] > full * 1.2,
               f"{r['motion_s']:.2f} s vs {full:.2f} s")

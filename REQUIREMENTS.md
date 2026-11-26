@@ -103,6 +103,16 @@ that once per truck is more reliable than any detector.
 
 Order: exclusion polygons → inclusion ROIs → glazing (reflections) → everything else (threshold).
 
+**Growth to the whole luminaire** (decided 2026-11-26). The first full test (a lab, ceiling
+panels at 300–600 cd/m²) counted only the slivers of each panel above 500 cd/m², so every UGR
+came out negative. The threshold now seeds a source; the source is every pixel connected to the
+seed (edges and corners) at or above the higher of half the threshold (fixed, so sessions still
+compare) and 2/3 of the seed's own luminance (so a bright lamp does not take in its lit
+surroundings or the lens's glow, which would lower its mean and with it the squared term).
+Growth stops at exclusions, ROIs and glazing. A source grown to more than 10× its seed is flagged
+(MEASURE). A luminaire wholly under the threshold still does not count. Applies to reflections
+too, from the reflection threshold. ROIs are not grown: the operator's outline is the extent.
+
 **Reflections** need their own parameters:
 
 - A separate, lower **reflection threshold**. Glass reflects a few percent at normal incidence and
@@ -756,7 +766,9 @@ sim-tested.
   fiducial (bias ≈ offset ÷ distance)
 - The fiducial's look: the code needs only a small spot brighter than its surroundings, within
   `search_deg` of the crosshair at the zero. Its contrast against a lit cab at night, and
-  whether its brightest part saturates live view, to be checked with the real target
+  whether its brightest part saturates live view, to be checked with the real target. First
+  full test (2026-11-26, a phone flashlight at 1 m in a lit room): found only when aimed
+  within ~3°, so `search_deg` went from 3 to 10
 
 - `iso_saturation_ratio` for the 2000D: a published measured saturation ISO at ISO 100 for
   this body (sensor test sites), so the ISO estimate of `k` starts closer than the label. Not

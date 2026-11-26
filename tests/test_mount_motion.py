@@ -140,11 +140,12 @@ def test_stop_during_goto():
 def test_speed_scales_duration():
     m, _ = mount(time_scale=0.05)
     m.set_zero()
+    # Long enough that cruise outweighs the ramps and the settle at 15 deg/s.
     t0 = time.monotonic()
-    m.move_to(20, 0)
+    m.move_to(60, 0)
     full = time.monotonic() - t0
     t0 = time.monotonic()
-    m.move_to(40, 0, speed=0.5)
+    m.move_to(120, 0, speed=0.5)
     assert time.monotonic() - t0 > 1.3 * full
     with pytest.raises(ValueError):
         m.move_to(0, 0, speed=1.5)

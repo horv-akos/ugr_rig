@@ -14,9 +14,12 @@ Order of precedence, per REQUIREMENTS §3.2:
      raked windscreen, so they get their own, lower threshold, and their own
      merge radius: laminated glass gives a double image (one per surface) that
      must count as one reflection.
-  4. Everything else at or above the absolute threshold: connected blobs.
-     Blobs closer than `merge_radius_px` are one luminaire (LED arrays), and
-     blobs under `min_pixels` are dropped as hot pixels.
+  4. Everything else at or above the absolute threshold seeds a source.
+     Seeds closer than `merge_radius_px` are one luminaire (LED arrays). Each
+     grows to the whole luminaire (`_grown`): a panel lit at 450 cd/m2 with a
+     corner at 550 is one source, not a 550 cd/m2 sliver; a lamp does not take
+     in its lit surroundings. Sources under `min_pixels` are dropped as hot
+     pixels. Reflections in the glazing (3) grow the same way.
 
 A source whose pixels touch the frame edge is cut: its omega is truncated. It is
 flagged; the forward-gaze rating replaces it with a whole view from another
@@ -134,6 +137,7 @@ class Source:
     path: str = "direct"              # "direct" | "reflection" (in the glazing)
     reflects: str | None = None       # the luminaire a reflection ROI mirrors
     cut: bool = False                 # touches the frame edge: omega truncated
+    n_seed_px: int = 0                # blobs: pixels at or above the threshold it grew from
     # filled in by analysis.ugr
     sigma_deg: float = float("nan")
     tau_deg: float = float("nan")
@@ -204,17 +208,79 @@ def _blobs(L: np.ndarray, candidates: np.ndarray, min_pixels: int, merge_radius_
     return out, dropped
 
 
+EIGHT = np.ones((3, 3), bool)     # pixels touching at an edge or a corner are connected
+
+
+def _grown(L: np.ndarray, omega: np.ndarray, allowed: np.ndarray, threshold: float,
+           min_pixels: int, merge_radius_px: int, extent_fraction: float,
+           source_fraction: float) -> tuple[list[tuple[np.ndarray, np.ndarray, int]], int]:
+    """Sources seeded at `threshold` and grown to the whole luminaire, brightest first:
+    (rows, cols, seed pixels in the source) each, and how many were dropped as too small.
+
+    Seeds are the pixels at or above the threshold, grouped as `_blobs` groups them. Each
+    group's extent level is the higher of `extent_fraction` x threshold (fixed, so sessions
+    compare) and `source_fraction` x the group's own solid-angle-weighted luminance (so a
+    bright lamp does not take in its lit surroundings or the lens's glow, which would dilute
+    its mean). The source is every pixel at or above that level, inside `allowed`, connected
+    (8 neighbours) to a seed pixel at or above it. A panel straddling the threshold counts
+    whole; one wholly under it still does not count. Seed pixels under a bright source's
+    level are left out of it: they are its surroundings. One pass, no iteration.
+    extent_fraction = 1 and source_fraction = 0 give the plain threshold blobs.
+    `min_pixels` applies to the grown source, so a hot pixel stays dropped."""
+    groups, _ = _blobs(L, (L >= threshold) & allowed, 1, merge_radius_px)
+    if not groups:
+        return [], 0
+    floor = extent_fraction * threshold
+    # Any extent at a level >= floor lies inside a component of this: crop each group to it.
+    outer, _ = ndimage.label((L >= floor) & allowed, structure=EIGHT)
+    boxes = ndimage.find_objects(outer)
+    taken = np.zeros(L.shape, bool)
+    out, dropped = [], 0
+    for vv, uu in groups:
+        free = ~taken[vv, uu]
+        vv, uu = vv[free], uu[free]
+        if vv.size == 0:
+            continue                               # swallowed by a brighter source
+        w = omega[vv, uu].astype(np.float64)
+        level = max(floor, source_fraction * float((L[vv, uu] * w).sum() / w.sum()))
+        keep = L[vv, uu] >= level
+        vv, uu = vv[keep], uu[keep]
+        comps = np.unique(outer[vv, uu])
+        r0 = min(boxes[c - 1][0].start for c in comps)
+        r1 = max(boxes[c - 1][0].stop for c in comps)
+        c0 = min(boxes[c - 1][1].start for c in comps)
+        c1 = max(boxes[c - 1][1].stop for c in comps)
+        crop = (slice(r0, r1), slice(c0, c1))
+        cand = np.isin(outer[crop], comps) & (L[crop] >= level) & ~taken[crop]
+        lab, _ = ndimage.label(cand, structure=EIGHT)
+        hit = np.unique(lab[vv - r0, uu - c0])
+        member = np.isin(lab, hit[hit > 0])
+        if int(member.sum()) < min_pixels:
+            dropped += 1
+            continue
+        taken[crop] |= member
+        mv, mu = np.nonzero(member)
+        out.append((mv + r0, mu + c0, int(vv.size)))
+    return out, dropped
+
+
 def detect_sources(L: np.ndarray, clipped: np.ndarray, geom: CameraGeometry,
                    masks: RegionMasks, threshold: float, min_pixels: int,
                    merge_radius_px: int, spectral, lighting: str = "dark",
                    reflection_threshold: float | None = None,
-                   reflection_merge_radius_px: int | None = None
+                   reflection_merge_radius_px: int | None = None, *,
+                   extent_fraction: float = 0.5, source_fraction: float = 2 / 3,
+                   extent_flag_ratio: float = 10.0
                    ) -> tuple[list[Source], np.ndarray, dict]:
     """Return (sources, label image, info). Label 0 = no source, i = sources[i-1].
 
     `spectral` maps a source type (or None) to its spectral correction factor. In `dark`
     studies glazing is searched for reflections against `reflection_threshold` (default:
-    the direct threshold)."""
+    the direct threshold). Blobs (not ROIs) grow from their threshold to the whole luminaire
+    (`_grown`); one grown to more than `extent_flag_ratio` times its seed is flagged
+    (0 = never)."""
+    if not 0.0 < extent_fraction <= 1.0 or not 0.0 <= source_fraction < 1.0:
+        raise ValueError("extent_fraction must be in (0, 1], source_fraction in [0, 1)")
     shape = L.shape
     omega = geom.solid_angle
     r_thr = threshold if reflection_threshold is None else reflection_threshold
@@ -247,32 +313,43 @@ def detect_sources(L: np.ndarray, clipped: np.ndarray, geom: CameraGeometry,
             s.path, s.reflects = "reflection", roi.reflects
         sources.append(s)
 
+    def blob(idx: int, name: str, vv, uu, n_seed: int, thr: float) -> Source:
+        s = _describe(idx, name, "blob", None, vv, uu, L, omega, clipped, geom,
+                      spectral(None))
+        s.n_seed_px = n_seed
+        if extent_flag_ratio > 0 and vv.size > extent_flag_ratio * n_seed:
+            s.flags.append(f"grown from {n_seed} px at or above {thr:g} cd/m2 to {vv.size} px: "
+                           "mostly under the threshold. Check it is one luminaire, not its lit "
+                           "surroundings or the lens's glow (an inclusion or exclusion area "
+                           "settles it)")
+        return s
+
     dropped = 0
     n_refl = 0
     if glazing.any():
-        found, d = _blobs(L, (L >= r_thr) & glazing & ~roi_area & (labels == 0), min_pixels,
-                          r_merge)
+        found, d = _grown(L, omega, glazing & ~roi_area & (labels == 0), r_thr, min_pixels,
+                          r_merge, extent_fraction, source_fraction)
         dropped += d
-        for vv, uu in found:
+        for vv, uu, n_seed in found:
             idx = len(sources) + 1
             n_refl += 1
             labels[vv, uu] = idx
-            s = _describe(idx, f"R{n_refl}", "blob", None, vv, uu, L, omega, clipped, geom,
-                          spectral(None))
+            s = blob(idx, f"R{n_refl}", vv, uu, n_seed, r_thr)
             s.path = "reflection"
             sources.append(s)
 
-    found, d = _blobs(L, (L >= threshold) & ~exclude & ~roi_area & ~glazing & (labels == 0),
-                      min_pixels, merge_radius_px)
+    found, d = _grown(L, omega, ~exclude & ~roi_area & ~glazing & (labels == 0), threshold,
+                      min_pixels, merge_radius_px, extent_fraction, source_fraction)
     dropped += d
-    for vv, uu in found:
+    for vv, uu, n_seed in found:
         idx = len(sources) + 1
         labels[vv, uu] = idx
-        sources.append(_describe(idx, f"S{idx}", "blob", None, vv, uu, L, omega,
-                                 clipped, geom, spectral(None)))
+        sources.append(blob(idx, f"S{idx}", vv, uu, n_seed, threshold))
 
     info = {"threshold_cd_m2": threshold, "min_pixels": min_pixels,
             "merge_radius_px": merge_radius_px, "dropped_small_blobs": dropped,
+            "extent_fraction": extent_fraction, "source_fraction": source_fraction,
+            "extent_flag_ratio": extent_flag_ratio,
             "lighting": lighting, "reflection_threshold_cd_m2": r_thr,
             "reflection_merge_radius_px": r_merge,
             "glazing": "searched for reflections" if lighting == "dark" else "excluded",
