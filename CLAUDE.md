@@ -63,6 +63,7 @@ pipeline/    region.py: one direction, bracket dir -> result dir · study.py: wo
 service/     controller.py: owns the mount and camera, one motion thread at a time, jog
              dead-man watchdog · liveview.py: one grabber thread for all viewers, paused()
              · study.py: the session sequence (one motion) + its analysis thread
+             · health.py: memory/temperature/undervoltage, logged every 10 min
              · positions.py: position profiles as TOML in <data>/profiles/positions/, with
              each position's reference image and masks beside them.
              · camera_profiles.py: camera profiles (body, lens, exposure, k + history) as
@@ -160,7 +161,9 @@ talks to hardware, so it is always testable on a desk against stored brackets.
   pixel pitch that keeps the 2000D field of view, as a config override in the provenance.
 - Pages pull live view one frame per request (`liveFeed()` in `api.js`, `/api/live/next`),
   never the MJPEG stream: pushed frames queue in the socket buffers and lagged ~10 s on the
-  rig's WiFi, starving the jog pings too.
+  rig's WiFi, starving the jog pings too. `liveFeed()` stops after `operator_idle_s` without
+  input (an open tab otherwise holds live view until the battery is flat); pages `poke()` it
+  while the head moves.
 - `/static` is served `Cache-Control: no-cache`, so after an update no phone runs old page
   code against the new API. Reference images come from `LiveView.snapshot()`, which drops the
   frame in progress (it may predate the end of the move).

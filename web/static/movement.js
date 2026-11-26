@@ -4,7 +4,7 @@
 // and the server ramps the jog down when the pings stop (released, tab hidden, WiFi gone).
 // Status is polled at 4 Hz, which doubles as the connection check.
 
-import { api, deg, el, liveFeed, remember, seg } from "./api.js";
+import { api, deg, el, idleText, liveFeed, remember, seg } from "./api.js";
 import { drawMasks, openMaskEditor, wireMaskEditor } from "./masks.js";
 
 const $ = (id) => document.getElementById(id);
@@ -239,10 +239,15 @@ function renderLive() {
   const want = liveWanted();
   if (want && !feed) feed = liveFeed(img);
   if (!want && feed) { feed.stop(); feed = null; }
+  if (feed) {
+    feed.idle_s = lv.operator_idle_s ?? feed.idle_s;
+    if (st.state !== "idle") feed.poke();   // a moving head is being watched
+  }
 
   let msg = "";
   if (lv.source === "none") msg = "No camera: the server was started with --camera none.";
   else if (!$("opt-live").checked) msg = "Live view off.";
+  else if (feed && feed.idle) msg = idleText(feed);
   else if (lv.state === "error") msg = `Camera: ${lv.error}`;
   else if (lv.state === "paused") msg = "Live view paused while the camera captures.";
   else if (feed && feed.error && !img.naturalWidth) msg = `Live view: ${feed.error}`;

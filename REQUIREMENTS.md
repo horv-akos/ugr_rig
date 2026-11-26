@@ -426,7 +426,11 @@ clients of its HTTP API; `mountctl` stays as the bench and measurement tool.
   current shows in the long frames. While it is paused the UI shows capture progress and the last
   frame instead. Built 2026-11-19 (`service/liveview.py`): one grabber thread for all viewers,
   idle when nobody watches, live view ended on the body after 5 s idle and before every bracket;
-  camera errors are shown and retried. On the desk a simulated cab follows the simulated head.
+  camera errors are shown and retried, backing off from 2 s to 30 s while the camera stays
+  gone. A page stops pulling after `operator_idle_s` (camera.toml `[live_view]`, 5 min) with no
+  touch, click or key, dims the last frame and resumes on any input; a moving head counts as
+  input. Added 2026-11-26 after a tab left open held live view until the battery was flat.
+  On the desk a simulated cab follows the simulated head.
   The gphoto2 side is tested against a fake libgphoto2 only
 - Live view overlays: crosshair at the optical axis, current pan/tilt, the current position's
   masks, and the outlines of the other saved positions projected into the view. Built, except the

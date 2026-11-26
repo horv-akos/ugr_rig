@@ -63,14 +63,40 @@ export function el(tag, attrs = {}, ...children) {
 // behind the head (an MJPEG stream lagged ~10 s on the rig's WiFi). Nothing is fetched while
 // the tab is hidden, which leaves the link to the jog pings. stop() ends it.
 // feed.fps: frames shown per second; feed.lag_s: about how old the shown frame was on arrival.
+//
+// Battery saver: after feed.idle_s (the status's live_view.operator_idle_s; 0: never) without a
+// touch, click, key or scroll on the page, nothing more is fetched, so the server leaves live
+// view and lowers the mirror; the last frame is dimmed and feed.idle is set. Any input brings it
+// back. feed.poke() counts as input: the pages call it while the head moves.
+// The live-view message while the feed is idle.
+export function idleText(feed) {
+  const min = Math.round(feed.idle_s / 60);
+  const after = min >= 1 ? `${min} min` : `${Math.round(feed.idle_s)} s`;
+  return `Live view paused after ${after} without input, to spare the camera. Tap or click to resume.`;
+}
+
+const INPUT_EVENTS = ["pointerdown", "pointermove", "keydown", "wheel", "touchstart"];
+
 export function liveFeed(img) {
-  const feed = { fps: 0, lag_s: null, error: null, stop };
-  let stopped = false, seq = -1, shown = null, last = 0;
+  const feed = { fps: 0, lag_s: null, error: null, idle: false, idle_s: 300, poke, stop };
+  let stopped = false, seq = -1, shown = null, last = 0, lastInput = performance.now();
   const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
+  for (const t of INPUT_EVENTS) document.addEventListener(t, poke, { capture: true, passive: true });
+
+  function poke() { lastInput = performance.now(); }
+
+  function quiet() {
+    const q = feed.idle_s > 0 && performance.now() - lastInput > feed.idle_s * 1000;
+    if (q !== feed.idle) {
+      feed.idle = q;
+      img.style.opacity = q ? "0.35" : "";
+    }
+    return q;
+  }
 
   async function loop() {
     while (!stopped) {
-      if (document.hidden) { await sleep(500); continue; }
+      if (quiet() || document.hidden) { await sleep(500); continue; }
       try {
         const r = await fetch(`/api/live/next?after=${seq}`, { cache: "no-store" });
         const t0 = performance.now();
@@ -108,6 +134,8 @@ export function liveFeed(img) {
 
   function stop() {
     stopped = true;
+    for (const t of INPUT_EVENTS) document.removeEventListener(t, poke, { capture: true });
+    img.style.opacity = "";
     img.removeAttribute("src");
     if (shown) URL.revokeObjectURL(shown);
     shown = null;

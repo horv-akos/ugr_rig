@@ -115,10 +115,11 @@ where to point the laptop's browser. Bound to 127.0.0.1 over SSH it says how to 
 |---|---|
 | `hal/` mount: config, motion, pigpio/sim backends, `mountctl` | **Built**, sim-tested; not yet on hardware |
 | `hal/tmc2209.py` — UART driver config, `mountctl drivers`, `mountctl hold` | **Built**; configuration verified on both real drivers (2026-11-24), `hold` sim-tested only. Open: a reset seen once on energising |
-| Pi deployment: systemd units, UART, WiFi access point (`deploy/`) | Written; not yet tried on the Pi |
+| Pi deployment: systemd units, UART, WiFi access point (`deploy/`) | Written; not yet tried on the Pi. Memory cap, hardware watchdog, persistent journal (§8, 2026-11-26): written, untried |
+| Server health log (`service/health.py`): memory, threads, temperature, undervoltage every 10 min, in `/api/system` | **Built**; desk-tested (fields are None off Linux); confirm on the Pi |
 | `photometry` + `analysis` + metrics, `pipeline/region.py`, `ugrctl` | **Built**, validated on synthetic brackets; needs real CR2s, the target and the meter |
 | `hal/camera.py` — gphoto2 against the 2000D; this is where the surprises live | **Built**, tested against a fake libgphoto2; connects to the real 2000D from the Pi (2026-11-23), no bracket yet |
-| Live view (camera preview), pulled one frame at a time | **Built**; simulated cab on the desk; runs on the body (2026-11-25, overexposed); the shutter control added for that is tested against a fake libgphoto2 only, confirm on the body. Pull instead of MJPEG (2026-11-26): the stream lagged ~10 s on the rig's WiFi; sim-tested on a throttled link, confirm on the Pi |
+| Live view (camera preview), pulled one frame at a time | **Built**; simulated cab on the desk; runs on the body (2026-11-25, overexposed); the shutter control added for that is tested against a fake libgphoto2 only, confirm on the body. Pull instead of MJPEG (2026-11-26): the stream lagged ~10 s on the rig's WiFi; sim-tested on a throttled link, confirm on the Pi. Pages stop pulling after 5 min without input, camera retries back off to 30 s (2026-11-26, sim-tested) |
 | Jog, nudge, speed and controlled stop in `hal/mount.py`; `service/` + HTTP API; `rigctl` | **Built**, sim-tested; not yet on hardware |
 | Measure the built head (`docs/PIVOT_DETAIL.md` §8) | After assembly |
 | `storage` + session sequence + analysis worker (`service/study.py`, `pipeline/study.py`) | **Built**, sim-tested; optical zero, aim check and drift check (2026-11-22); calibration shot from an accepted calibration within 12 h |

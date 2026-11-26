@@ -19,6 +19,15 @@ ExecStart=/home/ugr/ugr_rig/.venv/bin/python -m web --backend pigpio --camera gp
 TimeoutStopSec=15
 Restart=on-failure
 RestartSec=5
+# Memory cap (2026-11-26, deploy/README.md §8). The server runs at ~150 MB (sim, desk); its
+# analysis worker on real CR2s is not measured yet. 3 GB should only be reached by something
+# running away (check `health:` lines in the journal after the first real study). Then the kernel
+# kills it inside this service and systemd starts it again after RestartSec: SSH and the rest
+# of the Pi stay usable instead of the whole Pi grinding to a halt. A restart loses the head's
+# position (open loop): re-zero before the next study. MemorySwapMax=0 keeps the service out
+# of swap on the SD card, which is what makes a Pi short of memory crawl.
+MemoryMax=3G
+MemorySwapMax=0
 
 [Install]
 WantedBy=multi-user.target

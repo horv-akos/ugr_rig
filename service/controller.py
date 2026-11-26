@@ -32,6 +32,7 @@ from hal.config import MountConfig, load_config
 from hal.mount import MountError, MoveResult, NotZeroed, PanTiltMount
 from storage import StudyIndex, StudyStore
 
+from . import health
 from .camera_profiles import CameraProfile, CameraProfileStore, KRecord
 from .liveview import LiveView
 from .positions import (Position, PositionProfile, ProfileNotFound, ProfileStore, check_name,
@@ -127,6 +128,9 @@ class RigController:
         self._closing = threading.Event()
         self._watchdog = threading.Thread(target=self._watch, name="rig-watchdog", daemon=True)
         self._watchdog.start()
+        # memory, temperature, undervoltage into the log, so a freeze leaves evidence
+        threading.Thread(target=health.run_logger, args=(self._closing,), name="rig-health",
+                         daemon=True).start()
 
     @classmethod
     def from_config(cls, backend: str = "sim", data_dir: str | Path = DEFAULT_DATA_DIR,
@@ -1146,6 +1150,10 @@ class RigController:
         self._motion = m
         threading.Thread(target=body, name=f"rig-{kind}-{m.id}", daemon=True).start()
         return m
+
+    def health(self) -> dict[str, Any]:
+        """Memory, threads, temperature and undervoltage flags (service/health.py)."""
+        return health.snapshot()
 
     def _watch(self) -> None:
         while not self._closing.wait(WATCHDOG_PERIOD_S):

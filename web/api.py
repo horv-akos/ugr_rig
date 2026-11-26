@@ -465,7 +465,7 @@ def create_app(rig: RigController, shutdown_command: list[str] | None = None) ->
 
     @app.get("/api/system")
     def system() -> dict[str, Any]:
-        return {"shutdown": bool(shutdown_command)}
+        return {"shutdown": bool(shutdown_command), "health": rig.health()}
 
     @app.post("/api/system/shutdown")
     def shutdown() -> dict[str, Any]:

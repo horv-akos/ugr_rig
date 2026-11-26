@@ -108,7 +108,7 @@ def test_broken_frame_changes_nothing():
 
 @pytest.mark.parametrize("bad", [
     {"shutter_start": "8"}, {"target_level": 0}, {"highlight_fraction": 1.0},
-    {"deadband_ev": 0.1}, {"settle_frames": -1}])
+    {"deadband_ev": 0.1}, {"settle_frames": -1}, {"operator_idle_s": -1}])
 def test_config_is_checked(bad):
     with pytest.raises(ValueError):
         replace(CFG, **bad).validate()

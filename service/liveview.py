@@ -17,8 +17,15 @@ the grabber running between requests.
 ended, and the caller gets the camera to itself until the block exits.
 
 Camera errors do not stop the server. The state goes to "error" with the message (dial not on
-M, cable out, asleep), the camera is closed, and the grabber retries every `retry_s` while
-anyone is still watching.
+M, cable out, asleep), the camera is closed, and the grabber retries while anyone is still
+watching: after `retry_s`, then twice as long each time up to `retry_max_s`. Each try is a full
+libgphoto2 connect, so a camera that is gone (flat battery, 2026-11-26) is not hammered every
+2 s for hours. A viewer arriving after nobody watched, or a frame, starts again at `retry_s`.
+
+Live view itself is ended only when nobody watches, and a page that stays open keeps watching.
+So the pages stop pulling after `operator_idle_s` (camera.toml `[live_view]`, reported in the
+status) without a touch, click or key: an open tab no longer holds the mirror up until the
+battery is flat (`liveFeed()` in web/static/api.js).
 """
 
 from __future__ import annotations
@@ -34,12 +41,16 @@ log = logging.getLogger(__name__)
 
 class LiveView:
     def __init__(self, camera: Any | None, source: str = "none", max_fps: float = 10.0,
-                 idle_stop_s: float = 5.0, retry_s: float = 2.0, lease_s: float = 3.0) -> None:
+                 idle_stop_s: float = 5.0, retry_s: float = 2.0, lease_s: float = 3.0,
+                 retry_max_s: float = 30.0) -> None:
         self.camera = camera
         self.source = source if camera is not None else "none"
         self.max_fps = max_fps
         self.idle_stop_s = idle_stop_s
         self.retry_s = retry_s
+        self.retry_max_s = max(retry_s, retry_max_s)
+        self._retry_wait = retry_s              # grows while the camera keeps failing
+        self._retry_now = False                 # a new viewer: retry without waiting
         self.lease_s = lease_s
         self._cond = threading.Condition()
         self._cam_lock = threading.Lock()     # held for every camera call
@@ -64,6 +75,7 @@ class LiveView:
 
     def subscribe(self) -> None:
         with self._cond:
+            self._new_viewer()
             self._viewers += 1
             self._cond.notify_all()
 
@@ -74,6 +86,13 @@ class LiveView:
                 self._idle_since = time.monotonic()
             self._cond.notify_all()
 
+    def _new_viewer(self) -> None:
+        """Caller holds _cond. Someone starts watching after nobody did: a camera that failed
+        meanwhile may be back (battery changed), so do not keep them waiting on the backoff."""
+        if self._error and not self._watched():
+            self._retry_wait = self.retry_s
+            self._retry_now = True
+
     def _watched(self) -> bool:
         """Caller holds _cond."""
         return self._viewers > 0 or time.monotonic() < self._lease_until
@@ -82,6 +101,7 @@ class LiveView:
         """For a pulling viewer: the first frame newer than `after` (the latest on timeout),
         its sequence number and its age in seconds. Renews the lease."""
         with self._cond:
+            self._new_viewer()
             self._lease_until = max(self._lease_until, time.monotonic() + self.lease_s)
             self._cond.notify_all()
         seq, frame = self.wait_frame(max(after, 0), timeout)   # seq 0: no frame yet
@@ -162,8 +182,16 @@ class LiveView:
             return {"source": self.source, "state": state,
                     "viewers": self._viewers + int(leased),
                     "fps": round(self._fps, 1), "error": self._error,
+                    "retry_s": round(self._retry_wait, 1) if self._error else None,
                     "frame_age_s": None if age is None else round(age, 2),
-                    "exposure": exposure() if exposure else None}
+                    "exposure": exposure() if exposure else None,
+                    "operator_idle_s": self.operator_idle_s}
+
+    @property
+    def operator_idle_s(self) -> float:
+        """How long a page may show live view without input (0: no limit)."""
+        lv = getattr(getattr(self.camera, "config", None), "live_view", None)
+        return float(getattr(lv, "operator_idle_s", 300.0))
 
     def close(self) -> None:
         with self._cond:
@@ -222,6 +250,7 @@ class LiveView:
                 self._seq += 1
                 self._frame_at = time.monotonic()
                 self._error = None
+                self._retry_wait = self.retry_s
                 self._fps = 0.8 * self._fps + 0.2 * (1.0 / max(dt, 1e-3))
                 self._cond.notify_all()
 
@@ -237,7 +266,12 @@ class LiveView:
             self._connected = False
             self._previewing = False
         with self._cond:
-            self._cond.wait_for(lambda: self._closing, timeout=self.retry_s)
+            if not self._retry_now:
+                self._cond.wait_for(lambda: self._closing or self._retry_now,
+                                    timeout=self._retry_wait)
+                if not self._retry_now:
+                    self._retry_wait = min(2.0 * self._retry_wait, self.retry_max_s)
+            self._retry_now = False
 
     def _end_preview(self) -> None:
         """Caller holds _cam_lock."""

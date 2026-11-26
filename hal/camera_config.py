@@ -129,6 +129,7 @@ class LiveViewConfig:
     highlight_fraction: float = 0.05
     deadband_ev: float = 0.5
     settle_frames: int = 3
+    operator_idle_s: float = 300.0   # pages stop pulling live view after this without input
 
     def validate(self) -> None:
         if not (parse_shutter(self.shutter_fastest) <= parse_shutter(self.shutter_start)
@@ -142,6 +143,8 @@ class LiveViewConfig:
             raise ValueError("live_view.deadband_ev must be at least 1/3, the shutter's step")
         if self.settle_frames < 0:
             raise ValueError("live_view.settle_frames must not be negative")
+        if self.operator_idle_s < 0:
+            raise ValueError("live_view.operator_idle_s must not be negative (0: never)")
 
 
 @dataclass(frozen=True)

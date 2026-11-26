@@ -91,7 +91,18 @@ current shows in the 1 s and 4 s frames.
 The rig server owns the camera (`service/liveview.py`): one grabber thread serves every browser,
 at up to 10 fps, only while someone watches; 5 s after the last viewer leaves it ends live view on
 the body. Capture takes the camera through `LiveView.paused()`. Errors (dial off M, cable out,
-asleep) show on the page and are retried every 2 s.
+asleep) show on the page and are retried after 2 s, then twice as long each time up to 30 s
+(`retry_max_s`): each try is a full libgphoto2 connect, and a camera with a flat battery was
+otherwise tried every 2 s for hours. A viewer arriving after nobody watched gets a try at once.
+
+A viewer is anyone pulling frames, and an open page pulls for as long as it is visible. So the
+pages stop after `operator_idle_s` of `[live_view]` in `camera.toml` (300 s; 0: never) without
+a touch, click, key or scroll: the last frame is dimmed, the message says why, and any input
+resumes it. While the head moves or the camera shoots the page counts as watched. Then nobody
+watches, and 5 s later the server ends live view, so the mirror comes down and the sensor
+cools. Added 2026-11-26, after a tab left open held live view for hours until the battery ran
+flat. Switching the camera fully off and on is not possible over USB; with the dummy battery it
+would need a switched 12 V feed (a hardware decision).
 
 The pages pull frames one at a time (`/api/live/next?after=<seq>`, `liveFeed()` in
 `web/static/api.js`): the next frame is asked for only when the last has arrived, so a slow WiFi

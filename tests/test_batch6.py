@@ -108,7 +108,8 @@ def test_profile_copy_brings_images_and_masks(rig):
 
 def test_shutdown_is_offered_only_on_the_rig(rig, tmp_path):
     c = TestClient(create_app(rig))
-    assert c.get("/api/system").json() == {"shutdown": False}
+    sysinfo = c.get("/api/system").json()
+    assert sysinfo["shutdown"] is False and sysinfo["health"]["server_threads"] >= 1
     assert c.post("/api/system/shutdown").status_code == 409
 
 
@@ -118,7 +119,7 @@ def test_shutdown_runs_the_command_after_releasing(tmp_path):
     rig.enable()
     c = TestClient(create_app(rig, shutdown_command=[
         sys.executable, "-c", f"open({str(marker)!r}, 'w').close()"]))
-    assert c.get("/api/system").json() == {"shutdown": True}
+    assert c.get("/api/system").json()["shutdown"] is True
     r = c.post("/api/system/shutdown")
     assert r.status_code == 200 and not rig.mount.enabled          # drivers released first
     deadline = time.monotonic() + 10

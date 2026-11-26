@@ -169,3 +169,55 @@ def test_fake_camera_preview_and_bracket_end_it(tmp_path):
     assert cam.preview()[:2] == b"\xff\xd8" and cam.previewing
     cam.capture_bracket(tmp_path / "b")
     assert not cam.previewing
+
+
+class GoneCamera(FlakyCamera):
+    """A camera that is not there (flat battery): every connect fails."""
+
+    def connect(self) -> None:
+        self.calls.append("connect")
+        raise RuntimeError("no camera on USB")
+
+
+def test_retries_back_off_while_the_camera_is_gone():
+    cam = GoneCamera()
+    lv = LiveView(cam, "test", max_fps=50, retry_s=0.05, retry_max_s=0.2)
+    try:
+        lv.subscribe()
+        assert wait_for(lambda: lv.status()["state"] == "error")
+        assert "no camera" in lv.status()["error"]
+        assert wait_for(lambda: lv.status()["retry_s"] == 0.2)   # 0.05 -> 0.1 -> 0.2, capped
+        n = cam.calls.count("connect")
+        time.sleep(0.5)
+        assert cam.calls.count("connect") - n <= 3                # not every 0.05 s
+    finally:
+        lv.close()
+
+
+def test_a_new_viewer_retries_at_once():
+    """After nobody watched, a viewer gets a try without waiting out the backoff: the battery
+    may have been changed meanwhile."""
+    cam = GoneCamera()
+    lv = LiveView(cam, "test", max_fps=50, retry_s=0.05, retry_max_s=5.0, lease_s=0.1)
+    try:
+        lv.subscribe()
+        assert wait_for(lambda: lv.status()["state"] == "error")
+        assert wait_for(lambda: (lv.status()["retry_s"] or 0) >= 0.4, timeout=5.0)
+        lv.unsubscribe()
+        time.sleep(0.2)                                             # nobody watches
+        n = cam.calls.count("connect")
+        lv.next_frame(-1, timeout=0.05)
+        assert wait_for(lambda: cam.calls.count("connect") > n, timeout=0.3)
+    finally:
+        lv.close()
+
+
+def test_status_reports_the_operator_idle_limit():
+    cam = FakeCamera(load_camera_config(), scene=demo_scene(h=60, w=90),
+                     view=CabView(size=(120, 80)))
+    lv = LiveView(cam, "sim")
+    try:
+        assert lv.status()["operator_idle_s"] == load_camera_config().live_view.operator_idle_s
+    finally:
+        lv.close()
+    assert LiveView(FlakyCamera(), "test").status()["operator_idle_s"] == 300.0
